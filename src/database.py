@@ -11,7 +11,7 @@ from qdrant_client.models import Distance, PointStruct, VectorParams
 logger = logging.getLogger(__name__)
 
 COLLECTION_NAME = "audio_library"
-VECTOR_DIM = 512
+VECTOR_DIM = 768
 
 
 class AudioDatabase:

@@ -26,7 +26,7 @@ class TestRunIngest:
     def _make_embedder(self) -> MagicMock:
         embedder = MagicMock()
         embedder.load_audio.return_value = np.zeros(48000, dtype=np.float32)
-        embedder.embed.return_value = np.ones(512, dtype=np.float32) / np.sqrt(512)
+        embedder.embed.return_value = np.ones(768, dtype=np.float32) / np.sqrt(768)
         return embedder
 
     def test_full_scan_embed_upsert(self, tmp_path):
