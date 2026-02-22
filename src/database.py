@@ -46,12 +46,26 @@ class AudioDatabase:
         )
         return point_id
 
-    def search(self, query_embedding: np.ndarray, limit: int = 5) -> List[dict]:
+    def search(self, query_embedding: np.ndarray, limit: int = 10, offset: int = 0) -> List[dict]:
         # qdrant-client ≥1.10: client.search() removed; use query_points()
         result = self.client.query_points(
             collection_name=COLLECTION_NAME,
             query=query_embedding.tolist(),
             limit=limit,
+            offset=offset,
             with_payload=True,
         )
         return [{**hit.payload, "score": hit.score} for hit in result.points]
+
+    def get_all_points(self) -> tuple[List[dict], np.ndarray]:
+        """Retrieve all points (payloads and vectors) from the database."""
+        result = self.client.scroll(
+            collection_name=COLLECTION_NAME,
+            limit=10000,
+            with_payload=True,
+            with_vectors=True,
+        )
+        points = result[0]
+        payloads = [p.payload for p in points]
+        vectors = np.array([p.vector for p in points])
+        return payloads, vectors
