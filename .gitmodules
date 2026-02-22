@@ -1,3 +1,9 @@
 [submodule "m2d"]
 	path = m2d
 	url = https://github.com/nttcslab/m2d
+[submodule "demucs"]
+	path = demucs
+	url = https://github.com/facebookresearch/demucs.git
+[submodule "LARS"]
+	path = LARS
+	url = https://github.com/EdoardoMor/LARS
