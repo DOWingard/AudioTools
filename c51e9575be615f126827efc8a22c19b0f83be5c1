@@ -1,0 +1,43 @@
+src/app.py
+  b101ea059e5931d8 1-48
+tests/test_database.py
+  b101ea059e5931d8 1-106
+Dockerfile
+  b101ea059e5931d8 1-27
+tests/test_embedder.py
+  b101ea059e5931d8 1-77
+tests/conftest.py
+  b101ea059e5931d8 1-50
+docker-compose.yml
+  b101ea059e5931d8 1-33
+src/database.py
+  b101ea059e5931d8 1-57
+src/ingest.py
+  b101ea059e5931d8 1-56
+tests/test_ingest.py
+  b101ea059e5931d8 1-65
+requirements.txt
+  b101ea059e5931d8 1-7
+src/embedder.py
+  b101ea059e5931d8 1-44
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.1.4",
+  "base_commit_sha": "c51e9575be615f126827efc8a22c19b0f83be5c1",
+  "prompts": {
+    "b101ea059e5931d8": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "955a2ab5-7f8a-49e5-a669-ec1431a9ec5e",
+        "model": "claude-sonnet-4-6"
+      },
+      "human_author": "Derek Wingard <derekwingard@gmail.com>",
+      "messages": [],
+      "total_additions": 601,
+      "total_deletions": 26,
+      "accepted_lines": 570,
+      "overriden_lines": 0
+    }
+  }
+}
