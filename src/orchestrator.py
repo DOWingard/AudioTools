@@ -189,6 +189,7 @@ class Orchestrator:
             "intent": intent,
             "stem_used": str(stem_path),
             "results": results,
+            "query_vec": query_vec.tolist(),
         }
 
     def _do_search_clip(
@@ -202,7 +203,7 @@ class Orchestrator:
         results = self.db.search(query_vec, limit=limit)
         results = sorted(results, key=lambda x: x.get("score", 0), reverse=True)
 
-        return {"intent": intent, "results": results}
+        return {"intent": intent, "results": results, "query_vec": query_vec.tolist()}
 
     def _do_text_search(self, intent: dict, limit: int) -> dict:
         query_text = intent.get("query", "")
@@ -213,4 +214,4 @@ class Orchestrator:
         results = self.db.search(query_vec, limit=limit)
         results = sorted(results, key=lambda x: x.get("score", 0), reverse=True)
 
-        return {"intent": intent, "results": results}
+        return {"intent": intent, "results": results, "query_vec": query_vec.tolist()}
