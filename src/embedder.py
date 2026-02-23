@@ -52,3 +52,13 @@ class AudioEmbedder:
         with torch.inference_mode():
             emb = self.model.encode_clap_audio(audio)  # (1, 768)
         return emb.squeeze(0).cpu().numpy().astype(np.float32)
+
+    def encode_text(self, text: str) -> np.ndarray:
+        """Encode a text description into the same 768-D CLAP space as audio.
+
+        Uses M2D-CLAP's joint text-audio projection so that text queries
+        like 'punchy acoustic kick drum' land near matching audio embeddings.
+        """
+        with torch.inference_mode():
+            emb = self.model.encode_clap_text([text])  # (1, 768)
+        return emb.squeeze(0).cpu().numpy().astype(np.float32)
