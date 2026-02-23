@@ -57,8 +57,8 @@ class AudioDatabase:
         )
         return [{**hit.payload, "score": hit.score} for hit in result.points]
 
-    def get_all_points(self) -> tuple[List[dict], np.ndarray]:
-        """Retrieve all points (payloads and vectors) from the database."""
+    def get_all_points(self) -> tuple[List[dict], np.ndarray, List[str]]:
+        """Retrieve all points (payloads, vectors, point_ids) from the database."""
         result = self.client.scroll(
             collection_name=COLLECTION_NAME,
             limit=10000,
@@ -66,6 +66,22 @@ class AudioDatabase:
             with_vectors=True,
         )
         points = result[0]
+        if not points:
+            return [], np.empty((0, VECTOR_DIM), dtype=np.float32), []
         payloads = [p.payload for p in points]
-        vectors = np.array([p.vector for p in points])
-        return payloads, vectors
+        vectors = np.array([p.vector for p in points], dtype=np.float32)
+        ids = [str(p.id) for p in points]
+        return payloads, vectors, ids
+
+    def delete(self, point_ids: List[str]) -> None:
+        """Delete specific points by their Qdrant IDs."""
+        from qdrant_client.models import PointIdsList
+        self.client.delete(
+            collection_name=COLLECTION_NAME,
+            points_selector=PointIdsList(points=point_ids),
+        )
+
+    def clear(self) -> None:
+        """Remove all points and recreate the collection from scratch."""
+        self.client.delete_collection(COLLECTION_NAME)
+        self._ensure_collection()

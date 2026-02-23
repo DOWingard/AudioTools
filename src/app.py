@@ -71,23 +71,172 @@ def nlp_load_more(state: dict) -> dict:
 
 
 # ---------------------------------------------------------------------------
-# Graph view
+# Graph view helpers
 # ---------------------------------------------------------------------------
 
-def get_graph_data():
-    payloads, vectors = db.get_all_points()
-    if len(vectors) == 0:
+def get_graph_data(selected: list | None = None) -> pd.DataFrame:
+    payloads, vectors, ids = db.get_all_points()
+    if vectors.shape[0] == 0:
         return pd.DataFrame()
 
     pca = PCA(n_components=2)
     components = pca.fit_transform(vectors)
 
+    n = len(payloads)
+    sel_set = set(selected or [])
     return pd.DataFrame({
         "x": components[:, 0],
         "y": components[:, 1],
         "filename": [p["filename"] for p in payloads],
         "filepath": [p["filepath"] for p in payloads],
+        "point_id": ids,
+        "selected": ["selected" if i in sel_set else "unselected" for i in range(n)],
     })
+
+
+def _apply_selection(df: pd.DataFrame, selected: list) -> pd.DataFrame:
+    """Return a copy of df with the 'selected' column updated."""
+    if df.empty:
+        return df
+    updated = df.copy()
+    sel_set = set(selected)
+    updated["selected"] = ["selected" if i in sel_set else "unselected" for i in range(len(df))]
+    return updated
+
+
+def _selected_label(indices: list, df: pd.DataFrame) -> str:
+    if not indices or df.empty:
+        return "None selected"
+    names = [df.iloc[i]["filename"] for i in indices if i < len(df)]
+    return f"{len(names)} selected: {', '.join(names)}"
+
+
+def _resolve_plot_idx(evt: gr.SelectData, df: pd.DataFrame):
+    """
+    Robustly resolve a ScatterPlot click to a DataFrame row index.
+
+    Gradio 6's ScatterPlot passes click data through Vega-Lite which can
+    return evt.index as an int, list, dict, or None depending on the version.
+    We try four strategies in order:
+      1. evt.index as a plain integer
+      2. evt.value dict → match by 'filename'
+      3. evt.index as a list/tuple → first element
+      4. evt.index as a dict → match by 'filename'
+    """
+    if df.empty:
+        return None
+
+    raw = evt.index
+    val = getattr(evt, "value", None)
+
+    # Strategy 1: plain integer index
+    if isinstance(raw, int) and raw < len(df):
+        return raw
+
+    # Strategy 2: evt.value is the row dict — most reliable in Gradio 6
+    if isinstance(val, dict):
+        fname = val.get("filename")
+        if fname:
+            hits = df.index[df["filename"] == fname].tolist()
+            if hits:
+                return hits[0]
+
+    # Strategy 3: index is a list/tuple
+    if isinstance(raw, (list, tuple)) and raw:
+        first = raw[0]
+        if isinstance(first, int) and first < len(df):
+            return first
+        if isinstance(first, dict):
+            fname = first.get("filename")
+            if fname:
+                hits = df.index[df["filename"] == fname].tolist()
+                if hits:
+                    return hits[0]
+
+    # Strategy 4: index is a dict
+    if isinstance(raw, dict):
+        fname = raw.get("filename")
+        if fname:
+            hits = df.index[df["filename"] == fname].tolist()
+            if hits:
+                return hits[0]
+
+    return None
+
+
+def on_plot_click(evt: gr.SelectData, df: pd.DataFrame, selected: list) -> tuple:
+    """Play audio, toggle point selection, and re-render plot with highlight."""
+    if df.empty:
+        return None, "No data — click 'Load / Refresh Graph' first", selected, "None selected", df, df
+
+    idx = _resolve_plot_idx(evt, df)
+    if idx is None:
+        dbg = f"Unresolved click — index={evt.index!r}  value={getattr(evt, 'value', None)!r}"
+        return None, dbg, selected, _selected_label(selected, df), df, df
+
+    selected = [i for i in selected if i != idx] if idx in selected else selected + [idx]
+    updated_df = _apply_selection(df, selected)
+    row = df.iloc[idx]
+    return (
+        row["filepath"],
+        row["filename"],
+        selected,
+        _selected_label(selected, df),
+        updated_df,
+        updated_df,
+    )
+
+
+def add_samples(files, df: pd.DataFrame) -> tuple[pd.DataFrame, list, str, str]:
+    """Embed uploaded files, upsert to Qdrant, return refreshed graph + status."""
+    if not files:
+        return df, [], _selected_label([], df), "No files provided."
+
+    SAMPLES_DIR.mkdir(parents=True, exist_ok=True)
+    added, errors = [], []
+
+    for f in files:
+        # Gradio 6 returns FileData with .path; older versions return plain strings
+        tmp_path = Path(f.path if hasattr(f, "path") else str(f))
+        orig_name = getattr(f, "orig_name", None) or tmp_path.name
+        dest = SAMPLES_DIR / orig_name
+
+        import shutil
+        shutil.copy2(str(tmp_path), str(dest))
+
+        try:
+            waveform = embedder.load_audio(str(dest))
+            vec = embedder.embed(waveform)
+            db.upsert(vec, str(dest))
+            added.append(orig_name)
+        except Exception as e:
+            errors.append(f"{orig_name}: {e}")
+
+    new_df = get_graph_data()
+    parts = []
+    if added:
+        parts.append(f"Added {len(added)}: {', '.join(added)}")
+    if errors:
+        parts.append(f"Errors: {'; '.join(errors)}")
+    return new_df, [], "None selected", "\n".join(parts) or "Done.", new_df
+
+
+def remove_selected(selected: list, df: pd.DataFrame) -> tuple:
+    """Delete the currently selected points from Qdrant and refresh the graph."""
+    if not selected or df.empty:
+        return df, [], "None selected", "Nothing selected.", df
+
+    ids_to_delete = [df.iloc[i]["point_id"] for i in selected if i < len(df)]
+    db.delete(ids_to_delete)
+    new_df = get_graph_data()
+    return new_df, [], "None selected", f"Removed {len(ids_to_delete)} sample(s).", new_df
+
+
+def clear_all_samples() -> tuple:
+    """Wipe the entire Qdrant collection and return an empty graph."""
+    db.clear()
+    empty = pd.DataFrame()
+    return empty, [], "None selected", "All samples cleared.", empty
 
 
 # ---------------------------------------------------------------------------
@@ -186,33 +335,91 @@ with gr.Blocks(title="Audio Explorer") as demo:
 
         # ── Graph View Tab ────────────────────────────────────────────── #
         with gr.Tab("Graph View"):
-            gr.Markdown("Click a node to play its audio.")
-            graph_btn = gr.Button("Load / Refresh Graph")
-
-            audio_plot = gr.ScatterPlot(
-                x="x",
-                y="y",
-                tooltip=["filename"],
-                title="Audio Embeddings Projection (PCA)",
+            gr.Markdown(
+                "Click nodes to select them (click again to deselect). "
+                "Use the panel on the right to add or remove samples live."
             )
+
             df_state = gr.State(pd.DataFrame())
-            player = gr.Audio(label="Audio Player", type="filepath", interactive=False)
-            debug_txt = gr.Textbox(label="Debug Info", interactive=False)
+            selected_state = gr.State([])
 
-            graph_btn.click(fn=get_graph_data, inputs=[], outputs=[df_state]).then(
-                fn=lambda x: x, inputs=[df_state], outputs=[audio_plot]
+            with gr.Row():
+                # ── Left: plot + player ──────────────────────────────────── #
+                with gr.Column(scale=3):
+                    audio_plot = gr.ScatterPlot(
+                        x="x",
+                        y="y",
+                        color="selected",
+                        tooltip=["filename"],
+                        title="Audio Embeddings (PCA)",
+                    )
+                    player = gr.Audio(label="Now playing", type="filepath", interactive=False)
+                    debug_txt = gr.Textbox(label="Last clicked", interactive=False, lines=1)
+
+                # ── Right: controls ──────────────────────────────────────── #
+                with gr.Column(scale=1, min_width=260):
+                    graph_btn = gr.Button("Load / Refresh Graph", variant="secondary")
+                    graph_status = gr.Textbox(label="Status", interactive=False, lines=2)
+
+                    gr.Markdown("---")
+                    gr.Markdown("### Add samples")
+                    upload_files = gr.File(
+                        label="Audio files",
+                        file_count="multiple",
+                        file_types=["audio", ".wav", ".mp3", ".flac", ".aiff", ".ogg", ".m4a"],
+                    )
+                    add_btn = gr.Button("Add to Library", variant="primary")
+
+                    gr.Markdown("---")
+                    gr.Markdown("### Remove samples")
+                    selected_lbl = gr.Textbox(
+                        label="Selected",
+                        value="None selected",
+                        interactive=False,
+                        lines=2,
+                    )
+                    with gr.Row():
+                        remove_btn = gr.Button("Remove Selected", variant="stop")
+                        clear_btn = gr.Button("Clear All", variant="stop")
+
+            # ── Event wiring ─────────────────────────────────────────────── #
+
+            # Refresh graph — clear selection on refresh
+            graph_btn.click(
+                fn=get_graph_data, inputs=[], outputs=[df_state]
+            ).then(
+                fn=lambda df: ([], "None selected", df),
+                inputs=[df_state],
+                outputs=[selected_state, selected_lbl, audio_plot],
             )
 
-            def play_audio(evt: gr.SelectData, df: pd.DataFrame):
-                idx = evt.index
-                if isinstance(idx, (list, tuple)) and len(idx) > 0:
-                    idx = idx[0]
-                if isinstance(idx, int) and idx < len(df):
-                    filepath = df.iloc[idx]["filepath"]
-                    return filepath, f"Index: {idx}, File: {filepath}"
-                return None, f"DEBUG: invalid index {idx}. Type: {type(idx)}"
+            # Click node → play + toggle selection + re-render with highlight
+            audio_plot.select(
+                fn=on_plot_click,
+                inputs=[df_state, selected_state],
+                outputs=[player, debug_txt, selected_state, selected_lbl, df_state, audio_plot],
+            )
 
-            audio_plot.select(fn=play_audio, inputs=[df_state], outputs=[player, debug_txt])
+            # Add uploaded files → embed → upsert → refresh
+            add_btn.click(
+                fn=add_samples,
+                inputs=[upload_files, df_state],
+                outputs=[df_state, selected_state, selected_lbl, graph_status, audio_plot],
+            )
+
+            # Remove selected points
+            remove_btn.click(
+                fn=remove_selected,
+                inputs=[selected_state, df_state],
+                outputs=[df_state, selected_state, selected_lbl, graph_status, audio_plot],
+            )
+
+            # Clear entire library
+            clear_btn.click(
+                fn=clear_all_samples,
+                inputs=[],
+                outputs=[df_state, selected_state, selected_lbl, graph_status, audio_plot],
+            )
 
 if __name__ == "__main__":
     demo.launch(
