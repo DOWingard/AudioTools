@@ -1,0 +1,25 @@
+src/app.py
+  7f524b7a1d7b60c9 74,77-79,85-86,92-93,97-239,339-340,342,344,346-348,352,354-400,403-407,410-415,417-419,421
+src/database.py
+  7f524b7a1d7b60c9 60-61,69-70,72-87
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.1.4",
+  "base_commit_sha": "79be3ac88407b32d275786671930874722196f75",
+  "prompts": {
+    "7f524b7a1d7b60c9": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "24fedcab-37c5-4f88-911d-b6799318cdc4",
+        "model": "claude-sonnet-4-6"
+      },
+      "human_author": "Derek Wingard <derekwingard@gmail.com>",
+      "messages": [],
+      "total_additions": 286,
+      "total_deletions": 63,
+      "accepted_lines": 244,
+      "overriden_lines": 0
+    }
+  }
+}
