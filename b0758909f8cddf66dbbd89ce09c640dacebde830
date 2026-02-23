@@ -1,0 +1,25 @@
+src/orchestrator.py
+  7f524b7a1d7b60c9 192,206,217
+src/app.py
+  7f524b7a1d7b60c9 19,23,26-35,37-39,41-44,46,48-51,53,56-57,62-64,66-70,85,89,98,102,104-106,115,120,136,141,143,154-155,158,162,171,176-182,185,221
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.1.4",
+  "base_commit_sha": "b0758909f8cddf66dbbd89ce09c640dacebde830",
+  "prompts": {
+    "7f524b7a1d7b60c9": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "24fedcab-37c5-4f88-911d-b6799318cdc4",
+        "model": "claude-sonnet-4-6"
+      },
+      "human_author": "Derek Wingard <derekwingard@gmail.com>",
+      "messages": [],
+      "total_additions": 74,
+      "total_deletions": 89,
+      "accepted_lines": 65,
+      "overriden_lines": 0
+    }
+  }
+}
