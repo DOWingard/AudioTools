@@ -1,0 +1,25 @@
+src/embedder.py
+  7f524b7a1d7b60c9 17-20,51-55,58-69
+src/ingest.py
+  7f524b7a1d7b60c9 17,21-23,55-59,61
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.1.4",
+  "base_commit_sha": "5a8d6f9dbff31109b9153bba264bfb5ec62c8420",
+  "prompts": {
+    "7f524b7a1d7b60c9": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "24fedcab-37c5-4f88-911d-b6799318cdc4",
+        "model": "claude-sonnet-4-6"
+      },
+      "human_author": "Derek Wingard <derekwingard@gmail.com>",
+      "messages": [],
+      "total_additions": 32,
+      "total_deletions": 3,
+      "accepted_lines": 32,
+      "overriden_lines": 0
+    }
+  }
+}
