@@ -14,6 +14,10 @@ if str(_M2D_EXAMPLES) not in sys.path:
 from portable_m2d import PortableM2D  # noqa: E402
 
 SAMPLE_RATE = 16000
+# M2D-CLAP was trained on 10-second clips (80 mel-bins × 1001 time frames).
+# Short samples fill only 1-6% of the ViT's patch grid, collapsing all
+# drum types to near-identical embeddings. Tiling to the full window fixes this.
+_TARGET_SAMPLES = SAMPLE_RATE * 10  # 160 000 samples
 
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_WEIGHT = os.environ.get(
@@ -44,9 +48,25 @@ class AudioEmbedder:
             capture_output=True,
             check=True,
         )
-        return np.frombuffer(result.stdout, dtype=np.float32).copy()
+        audio = np.frombuffer(result.stdout, dtype=np.float32).copy()
+        # Apply int16 quantization to match M2D-CLAP training preprocessing.
+        # Clip to [-1, 1] first to prevent int16 overflow on hot signals.
+        audio = (audio.clip(-1.0, 1.0) * 32768.0).astype(np.int16).astype(np.float32) / 32768.0
+        return audio
 
     def embed(self, waveform: np.ndarray) -> np.ndarray:
+        """Embed a waveform into the 768-D M2D-CLAP space.
+
+        Short samples (one-shots, stems) are tiled to 10 seconds so they fill
+        the model's full mel-spectrogram window (80×1001). Without this, a
+        100 ms kick occupies only ~1% of the ViT patch grid and becomes
+        indistinguishable from other transient sounds.
+        """
+        if len(waveform) == 0:
+            waveform = np.zeros(_TARGET_SAMPLES, dtype=np.float32)
+        elif len(waveform) < _TARGET_SAMPLES:
+            repeats = -(-_TARGET_SAMPLES // len(waveform))  # ceiling division
+            waveform = np.tile(waveform, repeats)[:_TARGET_SAMPLES]
         # M2D-CLAP expects a batch tensor (B, T) at 16 kHz
         audio = torch.from_numpy(waveform).unsqueeze(0).to(self.device)  # (1, T)
         with torch.inference_mode():

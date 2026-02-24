@@ -14,9 +14,13 @@ logger = logging.getLogger(__name__)
 SUPPORTED_EXTENSIONS = {".wav", ".mp3", ".flac", ".ogg", ".aiff", ".m4a"}
 
 
-def run_ingest(samples_dir: str, qdrant_host: str) -> None:
+def run_ingest(samples_dir: str, qdrant_host: str, clear: bool = False) -> None:
     embedder = AudioEmbedder()
     db = AudioDatabase(host=qdrant_host)
+
+    if clear:
+        logger.info("Clearing existing collection before ingest.")
+        db.clear()
 
     paths = [
         p.resolve()
@@ -48,8 +52,13 @@ def main() -> None:
         default=os.environ.get("QDRANT_HOST", "localhost"),
         help="Qdrant host (default: QDRANT_HOST env or localhost)",
     )
+    parser.add_argument(
+        "--clear",
+        action="store_true",
+        help="Wipe the collection before ingesting. Use after embedder changes to avoid mixing old and new embeddings.",
+    )
     args = parser.parse_args()
-    run_ingest(args.samples_dir, args.qdrant_host)
+    run_ingest(args.samples_dir, args.qdrant_host, clear=args.clear)
 
 
 if __name__ == "__main__":
