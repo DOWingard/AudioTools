@@ -13,3 +13,4 @@ plotly>=5.15.0
 pandas>=2.0.0
 google-genai>=1.0.0
 python-dotenv>=1.0.0
+mutagen>=1.47.0
