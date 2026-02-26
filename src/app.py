@@ -1,19 +1,18 @@
 """
-SyncTag AI — Gradio Web UI
+Unified Pipeline — Gradio Web UI
 
-Upload an audio file (WAV / MP3 / FLAC / …), optionally supply an ISRC,
-and get back:
-  • a tagged audio copy (ID3 metadata embedded)
-  • a CSV sidecar ready for DISCO / sync-CMS import
-  • a markdown summary in the browser
+Two tabs:
+  1. SyncTag AI      — auto-tag audio for sync licensing
+  2. Stem Separator  — three-stage source separation (Demucs → LARS → one-shots)
 
 Run:
-    ~/.pyenv/versions/3.10.13/bin/python src/app.py
+    python src/app.py
 """
 
 import sys
 import shutil
 import tempfile
+import zipfile
 from pathlib import Path
 
 # Fix: Add project root to sys.path so `src` module is resolvable
@@ -23,6 +22,7 @@ import gradio as gr
 from dotenv import load_dotenv
 
 load_dotenv()
+
 
 # ---------------------------------------------------------------------------
 # Lazy-init tagger — loads M2D-CLAP checkpoint once on first request
@@ -38,24 +38,13 @@ def _get_tagger():
     return _tagger
 
 
-# ---------------------------------------------------------------------------
-# Pipeline handler
-# ---------------------------------------------------------------------------
+# =========================================================================== #
+# Tab 1 — SyncTag AI
+# =========================================================================== #
 
 def tag_track(audio_file: str, isrc: str) -> tuple:
     """
     Gradio handler: run the full SyncTag pipeline and return outputs.
-
-    Parameters
-    ----------
-    audio_file : str
-        Filepath provided by gr.Audio(type="filepath")
-    isrc : str
-        Optional ISRC code (may be empty string)
-
-    Returns
-    -------
-    (tagged_audio_path | None, csv_path | None, markdown_summary: str)
     """
     if not audio_file:
         return None, None, "**Error:** No audio file provided."
@@ -139,40 +128,187 @@ def _build_summary(result: dict) -> str:
     return "\n".join(lines)
 
 
-# ---------------------------------------------------------------------------
+# =========================================================================== #
+# Tab 2 — Stem Separator
+# =========================================================================== #
+
+def separate_audio(audio_file: str, progress=gr.Progress()):
+    """
+    Run the full three-stage separation pipeline and return state dict
+    with all stem paths for dynamic rendering.
+    """
+    if not audio_file:
+        return {}, "**Error:** No audio file provided."
+
+    try:
+        import torch
+        from src.advanced_separate import run_pipeline
+
+        device = "cuda" if torch.cuda.is_available() else "cpu"
+        input_path = Path(audio_file)
+        output_dir = Path(tempfile.mkdtemp(prefix="stems_")) / input_path.stem
+
+        progress(0.1, desc="Starting Demucs separation…")
+        all_files = run_pipeline(input_path, output_dir, device=device)
+
+        # Convert Path values to strings for Gradio
+        stem_dict = {}
+        for label, path in sorted(all_files.items()):
+            p = Path(path)
+            if p.exists():
+                stem_dict[label] = str(p)
+
+        return stem_dict, ""
+
+    except Exception as exc:
+        import traceback
+        traceback.print_exc()
+        return {}, f"**Error:** {exc}"
+
+
+def _group_stems(stem_dict: dict) -> dict:
+    """Group stems into categories for display."""
+    groups = {
+        "🎵 Main Stems": [],
+        "🥁 Drum Kit": [],
+        "🔊 One-Shots": [],
+    }
+    for label, path in stem_dict.items():
+        if label.startswith("oneshot_"):
+            display = label.replace("oneshot_", "").replace("_", " ").title() + " (One-Shot)"
+            groups["🔊 One-Shots"].append((display, path))
+        elif label.startswith("drums_"):
+            display = label.replace("drums_", "").replace("_", " ").title()
+            groups["🥁 Drum Kit"].append((display, path))
+        else:
+            display = label.replace("_", " ").title()
+            groups["🎵 Main Stems"].append((display, path))
+    return {k: v for k, v in groups.items() if v}
+
+
+def create_zip(stem_dict: dict) -> str | None:
+    """Bundle all stems into a single ZIP for download."""
+    if not stem_dict:
+        return None
+    zip_dir = Path(tempfile.mkdtemp(prefix="stems_zip_"))
+    zip_path = zip_dir / "all_stems.zip"
+    with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zf:
+        for label, filepath in stem_dict.items():
+            p = Path(filepath)
+            if p.exists():
+                zf.write(p, arcname=p.name)
+    return str(zip_path)
+
+
+# =========================================================================== #
 # Gradio UI
-# ---------------------------------------------------------------------------
+# =========================================================================== #
 
-with gr.Blocks(title="SyncTag AI") as demo:
-    gr.Markdown("# SyncTag AI\nAuto-tag audio for sync licensing")
+with gr.Blocks(
+    title="Audio Pipeline",
+    theme=gr.themes.Soft(
+        primary_hue="violet",
+        secondary_hue="slate",
+        neutral_hue="slate",
+    ),
+    css="""
+    .main-title { text-align: center; margin-bottom: 0.2em; }
+    .subtitle { text-align: center; color: #8b8b9e; margin-bottom: 1.5em; font-size: 1.05em; }
+    .stem-group-title { font-size: 1.15em; font-weight: 600; margin-top: 1em; }
+    """,
+) as demo:
+    gr.Markdown("# 🎛️ Audio Pipeline", elem_classes=["main-title"])
+    gr.Markdown("SyncTag AI  •  Stem Separator", elem_classes=["subtitle"])
 
-    with gr.Row():
-        # Left column — inputs
-        with gr.Column(scale=1):
-            audio_input = gr.Audio(
-                type="filepath",
-                label="Audio File",
-            )
-            isrc_input = gr.Textbox(
-                label="ISRC (optional)",
-                placeholder="e.g. GB-ABC-25-00001",
-                max_lines=1,
-            )
-            run_btn = gr.Button("Tag Track", variant="primary")
-
-        # Right column — outputs
-        with gr.Column(scale=2):
-            summary_output = gr.Markdown(label="Summary")
+    with gr.Tabs():
+        # ── Tab 1: SyncTag AI ─────────────────────────────────────────── #
+        with gr.Tab("🏷️ SyncTag AI", id="synctag"):
+            gr.Markdown("Upload audio to auto-tag for sync licensing. Get a tagged copy, CSV sidecar, and metadata summary.")
 
             with gr.Row():
-                audio_output = gr.File(label="Download Tagged Audio")
-                csv_output = gr.File(label="Download CSV Sidecar")
+                with gr.Column(scale=1):
+                    st_audio_input = gr.Audio(
+                        type="filepath",
+                        label="Audio File",
+                    )
+                    st_isrc_input = gr.Textbox(
+                        label="ISRC (optional)",
+                        placeholder="e.g. GB-ABC-25-00001",
+                        max_lines=1,
+                    )
+                    st_run_btn = gr.Button("🚀 Tag Track", variant="primary", size="lg")
 
-    run_btn.click(
-        fn=tag_track,
-        inputs=[audio_input, isrc_input],
-        outputs=[audio_output, csv_output, summary_output],
-    )
+                with gr.Column(scale=2):
+                    st_summary_output = gr.Markdown(label="Summary")
+                    with gr.Row():
+                        st_audio_output = gr.File(label="Download Tagged Audio")
+                        st_csv_output = gr.File(label="Download CSV Sidecar")
+
+            st_run_btn.click(
+                fn=tag_track,
+                inputs=[st_audio_input, st_isrc_input],
+                outputs=[st_audio_output, st_csv_output, st_summary_output],
+            )
+
+        # ── Tab 2: Stem Separator ─────────────────────────────────────── #
+        with gr.Tab("🎚️ Stem Separator", id="separator"):
+            gr.Markdown(
+                "Upload a full track to separate into stems. "
+                "**Demucs** extracts vocals, drums, bass, & more → "
+                "**LARS** splits drums into kick, snare, toms, hihat, & cymbals → "
+                "**Gate+Slice** produces one-shot samples from each drum component."
+            )
+
+            with gr.Row():
+                sep_audio_input = gr.Audio(
+                    type="filepath",
+                    label="Audio File",
+                )
+                sep_run_btn = gr.Button("🔀 Separate Stems", variant="primary", size="lg")
+
+            sep_error = gr.Markdown(visible=False)
+            sep_state = gr.State({})
+
+            # Dynamic results area
+            @gr.render(inputs=sep_state)
+            def render_stems(stem_dict):
+                if not stem_dict:
+                    return
+
+                groups = _group_stems(stem_dict)
+
+                for group_name, stems in groups.items():
+                    gr.Markdown(f"### {group_name}", elem_classes=["stem-group-title"])
+                    for display_name, filepath in stems:
+                        with gr.Row():
+                            gr.Audio(
+                                value=filepath,
+                                label=display_name,
+                                type="filepath",
+                                interactive=False,
+                            )
+
+                # Download all button
+                gr.Markdown("---")
+                dl_btn = gr.Button("📦 Download All Stems (ZIP)", variant="secondary")
+                dl_file = gr.File(label="All Stems ZIP")
+                dl_btn.click(
+                    fn=lambda: create_zip(stem_dict),
+                    inputs=[],
+                    outputs=[dl_file],
+                )
+
+            def run_separator(audio_file):
+                stem_dict, error = separate_audio(audio_file)
+                if error:
+                    return stem_dict, gr.update(value=error, visible=True)
+                return stem_dict, gr.update(value="", visible=False)
+
+            sep_run_btn.click(
+                fn=run_separator,
+                inputs=[sep_audio_input],
+                outputs=[sep_state, sep_error],
+            )
 
 
 if __name__ == "__main__":
