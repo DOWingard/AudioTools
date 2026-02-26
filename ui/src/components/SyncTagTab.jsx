@@ -87,104 +87,108 @@ export default function SyncTagTab() {
 
     return (
         <div className="fade-in">
-            <p style={{ color: 'var(--text-secondary)', marginBottom: '1.5rem' }}>
-                Upload audio to auto-tag for sync licensing. Get a tagged copy, CSV sidecar, and metadata summary.
-            </p>
+            <div className="card" style={{ marginBottom: '2rem' }}>
+                <p style={{ color: 'var(--text-secondary)', marginBottom: '2rem', fontSize: '1.05rem' }}>
+                    Upload audio to auto-tag for sync licensing. Instantly analyze tracks through our LLM pipeline and receive a rich metadata summary, a tagged copy, and a CSV sidecar.
+                </p>
 
-            <div className="two-col">
-                {/* Left column — inputs */}
-                <div>
-                    <div
-                        className={`upload-zone ${dragover ? 'dragover' : ''}`}
-                        onClick={() => fileRef.current?.click()}
-                        onDragOver={(e) => { e.preventDefault(); setDragover(true); }}
-                        onDragLeave={() => setDragover(false)}
-                        onDrop={(e) => {
-                            e.preventDefault();
-                            setDragover(false);
-                            if (e.dataTransfer.files[0]) handleFile(e.dataTransfer.files[0]);
-                        }}
-                    >
-                        <span className="icon">🎵</span>
-                        <span className="label">Drop audio here or click to browse</span>
-                        <span className="hint">WAV, FLAC, MP3, OGG, AIF</span>
-                        {file && <span className="file-name">{file.name}</span>}
-                        <input
-                            ref={fileRef}
-                            type="file"
-                            hidden
-                            accept=".wav,.flac,.mp3,.ogg,.aif,.aiff"
-                            onChange={(e) => e.target.files[0] && handleFile(e.target.files[0])}
-                        />
-                    </div>
-
-                    <div style={{ marginTop: '1.25rem' }}>
-                        <label className="field-label">ISRC (optional)</label>
-                        <input
-                            className="text-input"
-                            placeholder="e.g. GB-ABC-25-00001"
-                            value={isrc}
-                            onChange={(e) => setIsrc(e.target.value)}
-                        />
-                    </div>
-
-                    <button
-                        className="btn btn-primary"
-                        style={{ marginTop: '1.25rem', width: '100%', justifyContent: 'center' }}
-                        disabled={!file || loading}
-                        onClick={run}
-                    >
-                        {loading ? '⏳ Processing…' : '🚀 Tag Track'}
-                    </button>
-
-                    {loading && (
-                        <div style={{ marginTop: '1rem' }}>
-                            <div className="progress-text loading-pulse">{progress.text}</div>
-                            <div className="progress-bar-wrapper">
-                                <div className="progress-bar-fill" style={{ width: `${progress.pct}%` }} />
-                            </div>
+                <div className="two-col">
+                    {/* Left column — inputs */}
+                    <div>
+                        <div
+                            className={`upload-zone ${dragover ? 'dragover' : ''}`}
+                            onClick={() => fileRef.current?.click()}
+                            onDragOver={(e) => { e.preventDefault(); setDragover(true); }}
+                            onDragLeave={() => setDragover(false)}
+                            onDrop={(e) => {
+                                e.preventDefault();
+                                setDragover(false);
+                                if (e.dataTransfer.files[0]) handleFile(e.dataTransfer.files[0]);
+                            }}
+                        >
+                            <span className="icon">🎵</span>
+                            <span className="label">Drop audio here or click to browse</span>
+                            <span className="hint">WAV, FLAC, MP3, OGG, AIF</span>
+                            {file && <span className="file-name">{file.name}</span>}
+                            <input
+                                ref={fileRef}
+                                type="file"
+                                hidden
+                                accept=".wav,.flac,.mp3,.ogg,.aif,.aiff"
+                                onChange={(e) => e.target.files[0] && handleFile(e.target.files[0])}
+                            />
                         </div>
-                    )}
-                </div>
 
-                {/* Right column — results */}
-                <div>
-                    {error && <p className="status-error">❌ {error}</p>}
+                        <div style={{ marginTop: '1.5rem' }}>
+                            <label className="field-label">ISRC (optional)</label>
+                            <input
+                                className="text-input"
+                                placeholder="e.g. GB-ABC-25-00001"
+                                value={isrc}
+                                onChange={(e) => setIsrc(e.target.value)}
+                            />
+                        </div>
 
-                    {result && (
-                        <div className="card fade-in">
-                            <SummaryCard meta={result.meta} />
+                        <button
+                            className="btn btn-primary"
+                            style={{ marginTop: '1.5rem', width: '100%', justifyContent: 'center' }}
+                            disabled={!file || loading}
+                            onClick={run}
+                        >
+                            {loading ? '⏳ Processing…' : '🚀 Analyze & Tag Track'}
+                        </button>
 
-                            {result.audioBlob && (
-                                <div style={{ marginTop: '1.5rem' }}>
-                                    <WaveformPlayer
-                                        label="🎧 Tagged Audio"
-                                        audioBlob={result.audioBlob}
-                                        fileName={result.audioName}
-                                    />
+                        {loading && (
+                            <div style={{ marginTop: '1.5rem' }}>
+                                <div className="progress-text loading-pulse">{progress.text}</div>
+                                <div className="progress-bar-wrapper">
+                                    <div className="progress-bar-fill" style={{ width: `${progress.pct}%` }} />
                                 </div>
-                            )}
-
-                            <div className="download-row">
-                                {result.audioBlob && (
-                                    <button
-                                        className="btn btn-secondary"
-                                        onClick={() => downloadBlob(result.audioBlob, result.audioName)}
-                                    >
-                                        ⬇ Tagged Audio
-                                    </button>
-                                )}
-                                {result.csvBlob && (
-                                    <button
-                                        className="btn btn-secondary"
-                                        onClick={() => downloadBlob(result.csvBlob, result.csvName)}
-                                    >
-                                        ⬇ CSV Sidecar
-                                    </button>
-                                )}
                             </div>
-                        </div>
-                    )}
+                        )}
+                    </div>
+
+                    {/* Right column — results */}
+                    <div>
+                        {error && <p className="status-error">❌ {error}</p>}
+
+                        {result && (
+                            <div className="fade-in">
+                                <SummaryCard meta={result.meta} />
+
+                                {result.audioBlob && (
+                                    <div style={{ marginTop: '1.5rem' }}>
+                                        <WaveformPlayer
+                                            label="🎧 Tagged Audio"
+                                            audioBlob={result.audioBlob}
+                                            fileName={result.audioName}
+                                        />
+                                    </div>
+                                )}
+
+                                <div className="download-row">
+                                    {result.audioBlob && (
+                                        <button
+                                            className="btn btn-secondary"
+                                            style={{ flex: 1 }}
+                                            onClick={() => downloadBlob(result.audioBlob, result.audioName)}
+                                        >
+                                            ⬇ Tagged Audio
+                                        </button>
+                                    )}
+                                    {result.csvBlob && (
+                                        <button
+                                            className="btn btn-secondary"
+                                            style={{ flex: 1 }}
+                                            onClick={() => downloadBlob(result.csvBlob, result.csvName)}
+                                        >
+                                            ⬇ CSV Sidecar
+                                        </button>
+                                    )}
+                                </div>
+                            </div>
+                        )}
+                    </div>
                 </div>
             </div>
         </div>

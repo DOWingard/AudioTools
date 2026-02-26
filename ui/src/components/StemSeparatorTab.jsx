@@ -102,7 +102,6 @@ export default function StemSeparatorTab() {
         URL.revokeObjectURL(url);
     };
 
-    // Group stem entries that are present
     const renderGroup = (groupId) => {
         if (!stems) return null;
         const groupStems = STEM_LAYOUT.filter((s) => s.group === groupId && stems[s.key]);
@@ -110,8 +109,10 @@ export default function StemSeparatorTab() {
 
         const meta = GROUP_META[groupId];
         return (
-            <div key={groupId} className="fade-in">
-                <h3 className="group-header">{meta.title}</h3>
+            <div key={groupId} className="card fade-in" style={{ marginBottom: '1.5rem' }}>
+                <h3 className="group-header" style={{ marginTop: 0 }}>
+                    <span style={{ color: meta.color }}>{meta.title.split(' ')[0]}</span> {meta.title.split(' ').slice(1).join(' ')}
+                </h3>
                 {groupStems.map((s) => (
                     <WaveformPlayer
                         key={s.key}
@@ -127,74 +128,74 @@ export default function StemSeparatorTab() {
 
     return (
         <div className="fade-in">
-            <p style={{ color: 'var(--text-secondary)', marginBottom: '1.5rem' }}>
-                Upload a full track to separate into stems.{' '}
-                <strong>Demucs</strong> extracts vocals, drums, bass & more →{' '}
-                <strong>LARS</strong> splits drums into kit components →{' '}
-                <strong>Gate+Slice</strong> produces one-shot samples.
-            </p>
+            <div className="card" style={{ marginBottom: '2rem' }}>
+                <p style={{ color: 'var(--text-secondary)', marginBottom: '2rem', fontSize: '1.05rem' }}>
+                    Upload a full track to perform high-fidelity stem separation. Our multi-stage pipeline extracts pristine vocals, isolates individual drum kit components, and generates production-ready one-shots.
+                </p>
 
-            {/* Upload + Run */}
-            <div style={{ display: 'flex', gap: '1rem', alignItems: 'stretch', flexWrap: 'wrap' }}>
-                <div
-                    className={`upload-zone ${dragover ? 'dragover' : ''}`}
-                    style={{ flex: '1 1 400px' }}
-                    onClick={() => fileRef.current?.click()}
-                    onDragOver={(e) => { e.preventDefault(); setDragover(true); }}
-                    onDragLeave={() => setDragover(false)}
-                    onDrop={(e) => {
-                        e.preventDefault();
-                        setDragover(false);
-                        if (e.dataTransfer.files[0]) handleFile(e.dataTransfer.files[0]);
-                    }}
-                >
-                    <span className="icon">🎵</span>
-                    <span className="label">Drop audio here or click to browse</span>
-                    <span className="hint">WAV, FLAC, MP3, OGG, AIF</span>
-                    {file && <span className="file-name">{file.name}</span>}
-                    <input
-                        ref={fileRef}
-                        type="file"
-                        hidden
-                        accept=".wav,.flac,.mp3,.ogg,.aif,.aiff"
-                        onChange={(e) => e.target.files[0] && handleFile(e.target.files[0])}
-                    />
-                </div>
-
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem', flex: '0 0 auto', justifyContent: 'center' }}>
-                    <button
-                        className="btn btn-primary"
-                        disabled={!file || loading}
-                        onClick={run}
-                        style={{ whiteSpace: 'nowrap' }}
+                {/* Upload + Run */}
+                <div style={{ display: 'flex', gap: '2rem', alignItems: 'stretch', flexWrap: 'wrap' }}>
+                    <div
+                        className={`upload-zone ${dragover ? 'dragover' : ''}`}
+                        style={{ flex: '1 1 400px' }}
+                        onClick={() => fileRef.current?.click()}
+                        onDragOver={(e) => { e.preventDefault(); setDragover(true); }}
+                        onDragLeave={() => setDragover(false)}
+                        onDrop={(e) => {
+                            e.preventDefault();
+                            setDragover(false);
+                            if (e.dataTransfer.files[0]) handleFile(e.dataTransfer.files[0]);
+                        }}
                     >
-                        {loading ? '⏳ Processing…' : '🔀 Separate Stems'}
-                    </button>
-                    {zipBlob && (
-                        <button className="btn btn-secondary" onClick={downloadZip}>
-                            📦 Download All (ZIP)
-                        </button>
-                    )}
-                </div>
-            </div>
+                        <span className="icon">🎵</span>
+                        <span className="label">Drop audio here or click to browse</span>
+                        <span className="hint">WAV, FLAC, MP3, OGG, AIF</span>
+                        {file && <span className="file-name">{file.name}</span>}
+                        <input
+                            ref={fileRef}
+                            type="file"
+                            hidden
+                            accept=".wav,.flac,.mp3,.ogg,.aif,.aiff"
+                            onChange={(e) => e.target.files[0] && handleFile(e.target.files[0])}
+                        />
+                    </div>
 
-            {/* Progress */}
-            {loading && (
-                <div style={{ marginTop: '1rem' }}>
-                    <div className="progress-text loading-pulse">{progress.text}</div>
-                    <div className="progress-bar-wrapper">
-                        <div className="progress-bar-fill" style={{ width: `${progress.pct}%` }} />
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem', flex: '0 0 auto', justifyContent: 'center' }}>
+                        <button
+                            className="btn btn-primary"
+                            disabled={!file || loading}
+                            onClick={run}
+                            style={{ whiteSpace: 'nowrap', width: '100%' }}
+                        >
+                            {loading ? '⏳ Processing…' : '🔀 Separate Stems'}
+                        </button>
+                        {zipBlob && (
+                            <button className="btn btn-secondary" onClick={downloadZip} style={{ width: '100%' }}>
+                                📦 Download All (ZIP)
+                            </button>
+                        )}
                     </div>
                 </div>
-            )}
 
-            {/* Error / Status */}
-            {error && <p className="status-error" style={{ marginTop: '1rem' }}>❌ {error}</p>}
-            {status && <p className="status-success" style={{ marginTop: '1rem' }}>{status}</p>}
+                {/* Progress */}
+                {loading && (
+                    <div style={{ marginTop: '1rem' }}>
+                        <div className="progress-text loading-pulse">{progress.text}</div>
+                        <div className="progress-bar-wrapper">
+                            <div className="progress-bar-fill" style={{ width: `${progress.pct}%` }} />
+                        </div>
+                    </div>
+                )}
+
+                {/* Error / Status */}
+                {error && <p className="status-error" style={{ marginTop: '1rem' }}>❌ {error}</p>}
+                {status && <p className="status-success" style={{ marginTop: '1rem' }}>{status}</p>}
+
+            </div>
 
             {/* Stem waveform players — grouped, full width */}
             {stems && (
-                <div style={{ marginTop: '1rem' }}>
+                <div style={{ marginTop: '2rem' }}>
                     {['main', 'drums', 'oneshots'].map(renderGroup)}
                 </div>
             )}

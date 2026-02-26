@@ -1,42 +1,51 @@
-import { useState } from 'react';
+import { BrowserRouter as Router, Routes, Route, NavLink, Navigate } from 'react-router-dom';
 import SyncTagTab from './components/SyncTagTab.jsx';
 import StemSeparatorTab from './components/StemSeparatorTab.jsx';
 
-const TABS = [
-    { id: 'synctag', label: '🏷️ SyncTag AI' },
-    { id: 'separator', label: '🎚️ Stem Separator' },
+const ROUTES = [
+    { id: 'synctag', path: '/synctag', label: 'SyncTag AI' },
+    { id: 'separator', path: '/separator', label: 'Stem Separator' },
 ];
 
 export default function App() {
-    const [activeTab, setActiveTab] = useState('synctag');
-
     return (
-        <div className="app-shell">
-            <header className="app-header">
-                <h1>🎛️ Audio Pipeline</h1>
-                <p className="subtitle">SyncTag AI &nbsp;•&nbsp; Stem Separator</p>
-            </header>
+        <Router>
+            <div className="app-shell">
+                {/* ── Top Bar ─────────────────────────────────── */}
+                <header className="top-bar">
+                    <div className="top-bar-inner">
+                        <div className="top-bar-brand">
+                            <span className="brand-icon">♫</span>
+                            <span className="brand-text">Audio Pipeline</span>
+                        </div>
 
-            <nav className="tab-bar">
-                {TABS.map((t) => (
-                    <button
-                        key={t.id}
-                        className={`tab-btn ${activeTab === t.id ? 'active' : ''}`}
-                        onClick={() => setActiveTab(t.id)}
-                    >
-                        {t.label}
-                    </button>
-                ))}
-            </nav>
+                        <nav className="top-bar-nav">
+                            {ROUTES.map((route) => (
+                                <NavLink
+                                    key={route.id}
+                                    to={route.path}
+                                    className={({ isActive }) => `tab-link ${isActive ? 'active' : ''}`}
+                                >
+                                    {route.label}
+                                </NavLink>
+                            ))}
+                        </nav>
 
-            <main>
-                <div style={{ display: activeTab === 'synctag' ? 'block' : 'none' }}>
-                    <SyncTagTab />
-                </div>
-                <div style={{ display: activeTab === 'separator' ? 'block' : 'none' }}>
-                    <StemSeparatorTab />
-                </div>
-            </main>
-        </div>
+                        <button className="auth-btn" onClick={() => { }}>
+                            Sign In / Sign Up
+                        </button>
+                    </div>
+                </header>
+
+                {/* ── Page Content ────────────────────────────── */}
+                <main className="main-content">
+                    <Routes>
+                        <Route path="/" element={<Navigate to="/synctag" replace />} />
+                        <Route path="/synctag" element={<SyncTagTab />} />
+                        <Route path="/separator" element={<StemSeparatorTab />} />
+                    </Routes>
+                </main>
+            </div>
+        </Router>
     );
 }
