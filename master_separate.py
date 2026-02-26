@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 """
-Three-stage audio separation pipeline (from vocal-extractor branch):
+Three-stage audio separation pipeline:
   Stage 1 (Demucs):      input → vocals, drums, bass, other
   Stage 2 (LARS):        drums → kick, snare, toms, hihat, cymbals
   Stage 3 (Gate+Slice):  each drum stem → one-shot WAV samples
@@ -13,7 +13,6 @@ Three-stage audio separation pipeline (from vocal-extractor branch):
 import argparse
 import sys
 from pathlib import Path
-from typing import Callable, Optional
 
 import numpy as np
 import torch
@@ -157,18 +156,13 @@ def stage1_demucs(
     input_path: Path,
     output_dir: Path,
     device: str = "cpu",
-    progress_cb: Optional[Callable] = None,
 ) -> tuple[dict[str, torch.Tensor], int]:
     """
     Separate *input_path* into four stems using Demucs (htdemucs).
     Saves each stem as a WAV and returns (stems_dict, samplerate).
     """
     print(f"[Stage 1] Demucs separation: {input_path.name}")
-    if progress_cb:
-        progress_cb(0.05, "Loading Demucs model…")
     sep = _DemucsSeparator(model="htdemucs", device=device, progress=True)
-    if progress_cb:
-        progress_cb(0.10, "Running Demucs separation…")
     _, stems = sep.separate_audio_file(input_path)
 
     _STEM_RENAME = {"bass": "sub", "other": "midbass"}
@@ -193,7 +187,6 @@ def stage2_lars(
     drums_sr: int,
     output_dir: Path,
     device: str = "cpu",
-    progress_cb: Optional[Callable] = None,
 ) -> dict[str, torch.Tensor]:
     """
     Separate a drums-only stem into five kit components using LARS.
@@ -202,8 +195,6 @@ def stage2_lars(
     Returns dict stem_name → (2, N) tensor at 44100 Hz.
     """
     print("[Stage 2] LARS drum separation")
-    if progress_cb:
-        progress_cb(0.40, "Preparing drums for LARS…")
     output_dir.mkdir(parents=True, exist_ok=True)
 
     if drums_sr != _LARS_SR:
@@ -223,27 +214,14 @@ def stage2_lars(
     mag_batch  = mag.unsqueeze(0)        # (1, 2, 2049, T)
 
     print("  loading LARS models …")
-    if progress_cb:
-        progress_cb(0.45, "Loading LARS models…")
     models = _load_lars_models(device)
 
     results: dict[str, torch.Tensor] = {}
-    n_models = len(models)
-    for i, (stem, model) in enumerate(models.items()):
-        if progress_cb:
-            progress_cb(0.50 + 0.15 * (i / n_models), f"LARS: separating {stem}…")
+    for stem, model in models.items():
         with torch.no_grad():
             out_mag = model(mag_batch)   # (1, 2, 2049, T)
         out_mag   = out_mag.squeeze(0)   # (2, 2049, T)
         audio_out = _istft(out_mag, phase, length=n_samples).cpu()
-
-        # Prevent 32-bit float clipping in browser audio players.
-        # LARS frequency masking can push peaks beyond ±1.0, which DAWs
-        # handle fine but web browsers clip harshly.
-        peak = audio_out.abs().max()
-        if peak > 0.99:
-            audio_out = audio_out * (0.99 / peak)
-
         results[stem] = audio_out
 
         out_path = output_dir / f"drums_{stem}.wav"
@@ -265,7 +243,6 @@ def stage3_slice(
     rms_threshold_db:  float = -42.0,
     min_gap_ms:        float = 80.0,
     normalize:         bool  = True,
-    progress_cb: Optional[Callable] = None,
 ) -> dict[str, Path]:
     """
     For each LARS drum stem produce per-hit one-shot WAV files.
@@ -288,10 +265,8 @@ def stage3_slice(
 
     hop_length = 256   # librosa onset detection hop (≈ 5.8 ms at 44100 Hz)
 
-    for idx, (stem_name, audio) in enumerate(lars_stems.items()):  # audio: (2, N) float32
+    for stem_name, audio in lars_stems.items():  # audio: (2, N) float32
         print(f"  [Stage 3] {stem_name}")
-        if progress_cb:
-            progress_cb(0.70 + 0.20 * (idx / len(lars_stems)), f"Slicing one-shots: {stem_name}…")
 
         # ── timing constants (samples) ────────────────────────────────────── #
         release_ms  = _STEM_RELEASE_MS.get(stem_name, 350.0)
@@ -309,6 +284,9 @@ def stage3_slice(
         n_total = len(mono)
 
         # Band-limited analysis signal for onset detection and RMS evaluation.
+        # Filters out low-frequency content that is irrelevant to the stem
+        # (e.g. sub-1 kHz bleed on cymbals, sub-100 Hz rumble on toms) so
+        # that the loudest-hit decision reflects only the target frequency range.
         if stem_name in _ANALYSIS_HIGHPASS_HZ:
             analysis_mono = _highpass(mono, _ANALYSIS_HIGHPASS_HZ[stem_name], sr)
         else:
@@ -318,8 +296,8 @@ def stage3_slice(
             y=analysis_mono,
             sr=sr,
             hop_length=hop_length,
-            backtrack=True,
-            wait=wait_frames,
+            backtrack=True,      # walk back from peak to true onset
+            wait=wait_frames,    # coarse minimum gap in frames
             units="frames",
         )
         onset_samples = librosa.frames_to_samples(onset_frames, hop_length=hop_length)
@@ -398,7 +376,6 @@ def run_pipeline(
     input_path: str | Path,
     output_dir: str | Path,
     device: str = "cpu",
-    progress_cb: Optional[Callable] = None,
 ) -> dict[str, Path | list[Path]]:
     """
     Run the full three-stage pipeline on *input_path*.
@@ -417,20 +394,14 @@ def run_pipeline(
     oneshots_dir = output_dir / "oneshots"
 
     # Stage 1 ----------------------------------------------------------------
-    demucs_stems, demucs_sr = stage1_demucs(input_path, demucs_dir, device, progress_cb)
-    if progress_cb:
-        progress_cb(0.35, "Demucs complete — starting LARS…")
+    demucs_stems, demucs_sr = stage1_demucs(input_path, demucs_dir, device)
 
     # Stage 2 ----------------------------------------------------------------
-    lars_stems = stage2_lars(demucs_stems["drums"], demucs_sr, lars_dir, device, progress_cb)
-    if progress_cb:
-        progress_cb(0.65, "LARS complete — slicing one-shots…")
+    lars_stems = stage2_lars(demucs_stems["drums"], demucs_sr, lars_dir, device)
 
     # Stage 3 ----------------------------------------------------------------
     print("[Stage 3] Gate + slice → one-shot samples")
-    oneshot_paths = stage3_slice(lars_stems, _LARS_SR, oneshots_dir, progress_cb=progress_cb)
-    if progress_cb:
-        progress_cb(0.95, "Collecting output files…")
+    oneshot_paths = stage3_slice(lars_stems, _LARS_SR, oneshots_dir)
 
     # ── Collect all output paths ─────────────────────────────────────────── #
     all_files: dict[str, Path | list[Path]] = {}
@@ -449,3 +420,57 @@ def run_pipeline(
         print(f"  {label:28s}  {val}")
 
     return all_files
+
+
+# --------------------------------------------------------------------------- #
+# CLI
+# --------------------------------------------------------------------------- #
+def main():
+    parser = argparse.ArgumentParser(
+        description="Three-stage source separation: Demucs → LARS → one-shots"
+    )
+    parser.add_argument("input", help="Input audio file (mp3/wav/flac/…)")
+    parser.add_argument(
+        "-o", "--output-dir", default=None,
+        help="Output directory (default: <input_stem>_separated/)",
+    )
+    parser.add_argument(
+        "--device",
+        default="cuda" if torch.cuda.is_available() else "cpu",
+        help="Torch device (default: cuda if available, else cpu)",
+    )
+    parser.add_argument(
+        "--look-ahead-ms", type=float, default=10.0,
+        help="Gate look-ahead before onset in ms (default: 10)",
+    )
+    parser.add_argument(
+        "--hold-ms", type=float, default=20.0,
+        help="Gate hold time after onset in ms (default: 20)",
+    )
+    parser.add_argument(
+        "--threshold-db", type=float, default=-42.0,
+        help="RMS threshold to reject quiet hits in dBFS (default: -42)",
+    )
+    parser.add_argument(
+        "--min-gap-ms", type=float, default=80.0,
+        help="Minimum gap between onsets in ms (default: 80)",
+    )
+    parser.add_argument(
+        "--no-normalize", action="store_true",
+        help="Skip peak-normalisation of one-shot slices",
+    )
+    args = parser.parse_args()
+
+    input_path = Path(args.input)
+    if not input_path.exists():
+        parser.error(f"Input file not found: {input_path}")
+
+    out_dir = Path(args.output_dir) if args.output_dir else (
+        input_path.parent / f"{input_path.stem}_separated"
+    )
+
+    run_pipeline(input_path, out_dir, device=args.device)
+
+
+if __name__ == "__main__":
+    main()

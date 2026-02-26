@@ -1,86 +1,86 @@
 """
-Unified Pipeline — Gradio Web UI
+Gradio UI — thin browser frontend for the SyncTag Compute API.
 
-Two tabs:
-  1. SyncTag AI      — auto-tag audio for sync licensing
-  2. Stem Separator  — three-stage source separation (Demucs → LARS → one-shots)
+All heavy ML computation runs in the Compute API (FastAPI, port 8000).
+This process only uploads files and renders results.
 
 Run:
     python src/app.py
 """
 
-import sys
-import shutil
+import io
+import json
+import os
 import tempfile
 import zipfile
 from pathlib import Path
 
-# Fix: Add project root to sys.path so `src` module is resolvable
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-
 import gradio as gr
+import httpx
 from dotenv import load_dotenv
 
 load_dotenv()
 
-
-# ---------------------------------------------------------------------------
-# Lazy-init tagger — loads M2D-CLAP checkpoint once on first request
-# ---------------------------------------------------------------------------
-_tagger = None
-
-
-def _get_tagger():
-    global _tagger
-    if _tagger is None:
-        from src.synctag import SyncTagger
-        _tagger = SyncTagger()
-    return _tagger
+COMPUTE_API_URL = os.environ.get("COMPUTE_API_URL", "http://localhost:8000")
+_TIMEOUT = httpx.Timeout(connect=30.0, read=900.0, write=300.0, pool=10.0)
 
 
 # =========================================================================== #
 # Tab 1 — SyncTag AI
 # =========================================================================== #
 
-def tag_track(audio_file: str, isrc: str) -> tuple:
+def tag_track(audio_file: str, isrc: str, progress=gr.Progress()) -> tuple:
     """
-    Gradio handler: run the full SyncTag pipeline and return outputs.
+    Gradio handler: upload audio to the Compute API and return outputs.
     """
     if not audio_file:
         return None, None, "**Error:** No audio file provided."
 
     try:
-        tagger = _get_tagger()
+        progress(0.1, desc="Uploading to compute service…")
+        audio_path = Path(audio_file)
 
-        # Copy uploaded file to a clean temp dir, preserving the original name
+        with open(audio_path, "rb") as fh:
+            resp = httpx.post(
+                f"{COMPUTE_API_URL}/api/tag",
+                files={"audio": (audio_path.name, fh, "application/octet-stream")},
+                data={"isrc": (isrc or "").strip()},
+                timeout=_TIMEOUT,
+            )
+
+        if resp.status_code != 200:
+            detail = resp.text
+            try:
+                detail = resp.json().get("detail", detail)
+            except Exception:
+                pass
+            return None, None, f"**Error ({resp.status_code}):** {detail}"
+
+        progress(0.85, desc="Extracting results…")
+
+        # Extract ZIP to a temp directory
         tmp_dir = Path(tempfile.mkdtemp(prefix="synctag_ui_"))
-        original_name = Path(audio_file).name
-        audio_copy = tmp_dir / original_name
-        shutil.copy2(audio_file, audio_copy)
+        with zipfile.ZipFile(io.BytesIO(resp.content)) as zf:
+            zf.extractall(tmp_dir)
 
-        # Run pipeline
-        result = tagger.run(audio_copy)
+        # Locate outputs
+        meta_path = tmp_dir / "metadata.json"
+        result = json.loads(meta_path.read_text()) if meta_path.exists() else {}
 
-        # Inject ISRC if provided
-        isrc = (isrc or "").strip()
-        if isrc:
-            result.setdefault("llm", {}).setdefault("metadata", {})["ISRC"] = isrc
+        csv_files = list(tmp_dir.glob("*.csv"))
+        csv_path = str(csv_files[0]) if csv_files else None
 
-        # Export: ID3 tags embedded in-place on the copy
-        from src.export import write_csv_sidecar, write_id3_tags
-        try:
-            write_id3_tags(audio_copy, result)
-        except Exception as exc:
-            print(f"[app] ID3 warning: {exc}")
+        audio_files = [
+            p for p in tmp_dir.iterdir()
+            if p.suffix.lower() in {".wav", ".flac", ".mp3", ".ogg", ".aif", ".aiff"}
+        ]
+        tagged_audio = str(audio_files[0]) if audio_files else None
 
-        # Export: CSV sidecar alongside the audio copy
-        csv_path = tmp_dir / f"{audio_copy.stem}.csv"
-        write_csv_sidecar(result, csv_path)
-
-        # Build markdown summary
+        progress(0.95, desc="Building summary…")
         summary = _build_summary(result)
 
-        return str(audio_copy), str(csv_path), summary
+        progress(1.0, desc="Done!")
+        return tagged_audio, csv_path, summary
 
     except Exception as exc:
         return None, None, f"**Error:** {exc}"
@@ -132,91 +132,97 @@ def _build_summary(result: dict) -> str:
 # Tab 2 — Stem Separator
 # =========================================================================== #
 
+# All stems the pipeline can produce, in display order.
+# (internal_key, display_label, group)
+_STEM_LAYOUT = [
+    # Main Demucs stems
+    ("vocals",        "🎤 Vocals",       "main"),
+    ("drums",         "🥁 Drums",        "main"),
+    ("sub",           "🔊 Sub Bass",     "main"),
+    ("midbass",       "🎸 Mid/Other",    "main"),
+    # LARS drum kit
+    ("drums_kick",    "👟 Kick",         "drums"),
+    ("drums_snare",   "🪘 Snare",        "drums"),
+    ("drums_toms",    "🔔 Toms",         "drums"),
+    ("drums_hihat",   "🎩 Hi-Hat",       "drums"),
+    ("drums_cymbals", "💿 Cymbals",      "drums"),
+    # One-shots
+    ("oneshot_kick",    "👟 Kick Shot",   "oneshots"),
+    ("oneshot_snare",   "🪘 Snare Shot",  "oneshots"),
+    ("oneshot_toms",    "🔔 Toms Shot",   "oneshots"),
+    ("oneshot_hihat",   "🎩 Hi-Hat Shot", "oneshots"),
+    ("oneshot_cymbals", "💿 Cymbals Shot","oneshots"),
+]
+
+
 def separate_audio(audio_file: str, progress=gr.Progress()):
     """
-    Run the full three-stage separation pipeline and return state dict
-    with all stem paths for dynamic rendering.
+    Upload audio to the Compute API separation endpoint and return outputs.
+    Returns: (progress_text, zip_file, *stem_audios)
     """
+    n_stems = len(_STEM_LAYOUT)
+    empty = ("", None) + tuple(None for _ in range(n_stems))
+
     if not audio_file:
-        return {}, "**Error:** No audio file provided."
+        return ("**Error:** No audio file provided.", None) + tuple(None for _ in range(n_stems))
 
     try:
-        import torch
-        from src.advanced_separate import run_pipeline
+        progress(0.05, desc="Uploading to compute service…")
+        audio_path = Path(audio_file)
 
-        device = "cuda" if torch.cuda.is_available() else "cpu"
-        input_path = Path(audio_file)
-        output_dir = Path(tempfile.mkdtemp(prefix="stems_")) / input_path.stem
+        with open(audio_path, "rb") as fh:
+            resp = httpx.post(
+                f"{COMPUTE_API_URL}/api/separate",
+                files={"audio": (audio_path.name, fh, "application/octet-stream")},
+                timeout=_TIMEOUT,
+            )
 
-        progress(0.1, desc="Starting Demucs separation…")
-        all_files = run_pipeline(input_path, output_dir, device=device)
+        if resp.status_code != 200:
+            detail = resp.text
+            try:
+                detail = resp.json().get("detail", detail)
+            except Exception:
+                pass
+            return (f"**Error ({resp.status_code}):** {detail}", None) + tuple(None for _ in range(n_stems))
 
-        # Convert Path values to strings for Gradio
-        stem_dict = {}
-        for label, path in sorted(all_files.items()):
-            p = Path(path)
-            if p.exists():
-                stem_dict[label] = str(p)
+        progress(0.90, desc="Extracting stems…")
 
-        return stem_dict, ""
+        # Extract ZIP to temp dir
+        tmp_dir = Path(tempfile.mkdtemp(prefix="synctag_sep_"))
+        zip_bytes = resp.content
+        with zipfile.ZipFile(io.BytesIO(zip_bytes)) as zf:
+            zf.extractall(tmp_dir)
+
+        # Save the ZIP itself for bulk download
+        zip_path = tmp_dir / f"{audio_path.stem}_stems.zip"
+        zip_path.write_bytes(zip_bytes)
+
+        # Build a dict from extracted stem key → file path
+        extracted: dict[str, str] = {}
+        for p in tmp_dir.glob("*.wav"):
+            key = p.stem  # e.g. "vocals", "drums_kick"
+            extracted[key] = str(p)
+
+        # Map results into the fixed stem layout slots
+        stem_outputs = []
+        for key, _label, _group in _STEM_LAYOUT:
+            stem_outputs.append(extracted.get(key))
+
+        n_found = len(extracted)
+        progress(1.0, desc="Done!")
+        status = f"✅ **Separated {n_found} stems** from `{audio_path.name}`"
+        return (status, str(zip_path)) + tuple(stem_outputs)
 
     except Exception as exc:
-        import traceback
-        traceback.print_exc()
-        return {}, f"**Error:** {exc}"
-
-
-def _group_stems(stem_dict: dict) -> dict:
-    """Group stems into categories for display."""
-    groups = {
-        "🎵 Main Stems": [],
-        "🥁 Drum Kit": [],
-        "🔊 One-Shots": [],
-    }
-    for label, path in stem_dict.items():
-        if label.startswith("oneshot_"):
-            display = label.replace("oneshot_", "").replace("_", " ").title() + " (One-Shot)"
-            groups["🔊 One-Shots"].append((display, path))
-        elif label.startswith("drums_"):
-            display = label.replace("drums_", "").replace("_", " ").title()
-            groups["🥁 Drum Kit"].append((display, path))
-        else:
-            display = label.replace("_", " ").title()
-            groups["🎵 Main Stems"].append((display, path))
-    return {k: v for k, v in groups.items() if v}
-
-
-def create_zip(stem_dict: dict) -> str | None:
-    """Bundle all stems into a single ZIP for download."""
-    if not stem_dict:
-        return None
-    zip_dir = Path(tempfile.mkdtemp(prefix="stems_zip_"))
-    zip_path = zip_dir / "all_stems.zip"
-    with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zf:
-        for label, filepath in stem_dict.items():
-            p = Path(filepath)
-            if p.exists():
-                zf.write(p, arcname=p.name)
-    return str(zip_path)
+        print(f"[app/separate] {type(exc).__name__}: {exc}")
+        return (f"**Error:** {exc}", None) + tuple(None for _ in range(n_stems))
 
 
 # =========================================================================== #
 # Gradio UI
 # =========================================================================== #
 
-with gr.Blocks(
-    title="Audio Pipeline",
-    theme=gr.themes.Soft(
-        primary_hue="violet",
-        secondary_hue="slate",
-        neutral_hue="slate",
-    ),
-    css="""
-    .main-title { text-align: center; margin-bottom: 0.2em; }
-    .subtitle { text-align: center; color: #8b8b9e; margin-bottom: 1.5em; font-size: 1.05em; }
-    .stem-group-title { font-size: 1.15em; font-weight: 600; margin-top: 1em; }
-    """,
-) as demo:
+with gr.Blocks(title="Audio Pipeline") as demo:
     gr.Markdown("# 🎛️ Audio Pipeline", elem_classes=["main-title"])
     gr.Markdown("SyncTag AI  •  Stem Separator", elem_classes=["subtitle"])
 
@@ -260,56 +266,92 @@ with gr.Blocks(
             )
 
             with gr.Row():
-                sep_audio_input = gr.Audio(
-                    type="filepath",
-                    label="Audio File",
+                sep_audio_input = gr.File(
+                    label="Audio File (WAV / FLAC / MP3)",
+                    file_types=[".wav", ".flac", ".mp3", ".ogg", ".aif", ".aiff"],
                 )
                 sep_run_btn = gr.Button("🔀 Separate Stems", variant="primary", size="lg")
 
-            sep_error = gr.Markdown(visible=False)
-            sep_state = gr.State({})
+            # Status + download
+            sep_status = gr.Markdown("")
+            sep_zip = gr.File(label="📦 Download All Stems (ZIP)", visible=True)
 
-            # Dynamic results area
-            @gr.render(inputs=sep_state)
-            def render_stems(stem_dict):
-                if not stem_dict:
-                    return
+            # ── Pre-defined audio players — vertical stack, full width ──── #
+            stem_outputs = []
 
-                groups = _group_stems(stem_dict)
-
-                for group_name, stems in groups.items():
-                    gr.Markdown(f"### {group_name}", elem_classes=["stem-group-title"])
-                    for display_name, filepath in stems:
-                        with gr.Row():
-                            gr.Audio(
-                                value=filepath,
-                                label=display_name,
-                                type="filepath",
-                                interactive=False,
-                            )
-
-                # Download all button
-                gr.Markdown("---")
-                dl_btn = gr.Button("📦 Download All Stems (ZIP)", variant="secondary")
-                dl_file = gr.File(label="All Stems ZIP")
-                dl_btn.click(
-                    fn=lambda: create_zip(stem_dict),
-                    inputs=[],
-                    outputs=[dl_file],
+            def _stem_player(key: str, label: str):
+                """Render one audio player + its volume slider, wired via JS."""
+                a = gr.Audio(label=label, type="filepath", interactive=False,
+                             elem_classes=["stem-player"], elem_id=f"stem_{key}")
+                vol = gr.Slider(minimum=0, maximum=1, value=1, step=0.01,
+                                label="Volume", elem_classes=["volume-slider"])
+                vol.change(
+                    fn=None,
+                    inputs=[vol],
+                    outputs=[],
+                    js=(
+                        f"(v) => {{"
+                        f"  const el = document.querySelector('#stem_{key} audio');"
+                        f"  if (el) el.volume = v;"
+                        f"  return [];"
+                        f"}}"
+                    ),
                 )
+                return a
 
-            def run_separator(audio_file):
-                stem_dict, error = separate_audio(audio_file)
-                if error:
-                    return stem_dict, gr.update(value=error, visible=True)
-                return stem_dict, gr.update(value="", visible=False)
+            gr.Markdown("### 🎵 Main Stems", elem_classes=["group-title"])
+            for key, label, group in _STEM_LAYOUT:
+                if group != "main":
+                    continue
+                stem_outputs.append(_stem_player(key, label))
+
+            gr.Markdown("### 🥁 Drum Stems", elem_classes=["group-title"])
+            for key, label, group in _STEM_LAYOUT:
+                if group != "drums":
+                    continue
+                stem_outputs.append(_stem_player(key, label))
+
+            gr.Markdown("### 🔊 Drum 1 Shots", elem_classes=["group-title"])
+            for key, label, group in _STEM_LAYOUT:
+                if group != "oneshots":
+                    continue
+                stem_outputs.append(_stem_player(key, label))
+
+            def run_separator(file_obj):
+                audio_file = file_obj if isinstance(file_obj, str) else (file_obj.name if file_obj else None)
+                return separate_audio(audio_file)
 
             sep_run_btn.click(
                 fn=run_separator,
                 inputs=[sep_audio_input],
-                outputs=[sep_state, sep_error],
+                outputs=[sep_status, sep_zip] + stem_outputs,
             )
 
 
 if __name__ == "__main__":
-    demo.launch(server_name="0.0.0.0", server_port=7860)
+    demo.launch(
+        server_name="0.0.0.0",
+        server_port=7860,
+        theme=gr.themes.Soft(
+            primary_hue="violet",
+            secondary_hue="slate",
+            neutral_hue="slate",
+        ),
+        css="""
+        .main-title { text-align: center; margin-bottom: 0.2em; }
+        .subtitle { text-align: center; color: #8b8b9e; margin-bottom: 1.5em; font-size: 1.05em; }
+        .group-title { font-size: 1.3em; font-weight: 700; margin-top: 1.5em; margin-bottom: 0.5em;
+                       border-bottom: 2px solid #7c3aed; padding-bottom: 0.3em; }
+        /* Full-width vertical stem players — waveform stretches to fit */
+        .stem-player { width: 100% !important; max-width: 100% !important; }
+        .stem-player audio { width: 100% !important; }
+        .stem-player .waveform-container,
+        .stem-player .audio-container,
+        .stem-player canvas,
+        .stem-player svg { width: 100% !important; max-width: 100% !important; }
+        /* Volume slider — compact strip directly below each player */
+        .volume-slider { margin-top: -0.5em !important; margin-bottom: 0.8em !important; }
+        .volume-slider .label-wrap { display: none !important; }
+        .volume-slider input[type=range] { height: 4px; }
+        """,
+    )
