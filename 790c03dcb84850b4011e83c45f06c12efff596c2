@@ -1,0 +1,51 @@
+ui/src/components/SyncTagTab.jsx
+  e161b22c8dc21243 3,11,39-41
+ui/src/App.jsx
+  e161b22c8dc21243 16,26,91,105-106,108-110,112
+ui/src/components/StemSeparatorTab.jsx
+  e161b22c8dc21243 3,35,67-69
+ui/package.json
+  e161b22c8dc21243 14,18,20
+ui/src/components/AudioJoinerTab.jsx
+  e161b22c8dc21243 2,9,46-48
+requirements.txt
+  e161b22c8dc21243 20
+ui/src/components/AudioCutterTab.jsx
+  e161b22c8dc21243 4,19,173-175
+ui/src/components/FormatConverterTab.jsx
+  e161b22c8dc21243 2,15,42-44
+ui/src/AuthContext.jsx
+  e161b22c8dc21243 10,18-22,27
+docker-compose.yml
+  e161b22c8dc21243 2-16,67-76,106-107
+api/main.py
+  e161b22c8dc21243 14-16,19,22,26,28-29,31,34,36,38-49,63-64,81-261,281,289-290,323-332,363,368-369,386-403,435,456-466,488,529-540,562,595-604,632,657-666,857,868,1018-1074,1076-1211,1215-1334
+Dockerfile.compute
+  e161b22c8dc21243 15,24-26
+ui/src/components/SubscriptionModal.jsx
+  e161b22c8dc21243 1,25,27-32
+ui/src/components/MyFilesTab.jsx
+  e161b22c8dc21243 1-1001
+ui/src/components/KaraokeTab.jsx
+  e161b22c8dc21243 2,10,37-38,40
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.1.4",
+  "base_commit_sha": "790c03dcb84850b4011e83c45f06c12efff596c2",
+  "prompts": {
+    "e161b22c8dc21243": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "7c3f8b4c-2483-42c4-919e-2abd4da38510",
+        "model": "claude-sonnet-4-6"
+      },
+      "human_author": "Derek Wingard <derekwingard@gmail.com>",
+      "messages": [],
+      "total_additions": 2164,
+      "total_deletions": 538,
+      "accepted_lines": 1704,
+      "overriden_lines": 0
+    }
+  }
+}
