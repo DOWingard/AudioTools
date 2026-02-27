@@ -1,4 +1,4 @@
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useRef } from 'react';
 import { useAuth } from '@clerk/clerk-react';
 import { loadStripe } from '@stripe/stripe-js';
 import { EmbeddedCheckoutProvider, EmbeddedCheckout } from '@stripe/react-stripe-js';
@@ -22,9 +22,14 @@ const PLANS = [
     },
 ];
 
-export default function SubscriptionModal({ open, onClose }) {
+export default function SubscriptionModal({ open, onClose, initialPlan = null }) {
     const { getToken } = useAuth();
-    const [selectedPlan, setSelectedPlan] = useState(null);
+    const [selectedPlan, setSelectedPlan] = useState(initialPlan);
+
+    // Sync selectedPlan when modal opens or initialPlan changes
+    const prevOpen = useRef(false);
+    if (open && !prevOpen.current) { selectedPlan !== initialPlan && setSelectedPlan(initialPlan); }
+    prevOpen.current = open;
     const [error, setError] = useState('');
 
     const fetchClientSecret = useCallback(async () => {

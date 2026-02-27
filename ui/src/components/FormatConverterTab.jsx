@@ -1,4 +1,5 @@
 import { useState, useRef } from 'react';
+import { useAuth } from '@clerk/clerk-react';
 import { useGatedRun } from '../AuthContext.jsx';
 
 const API_BASE = '/api';
@@ -11,6 +12,7 @@ const FORMATS = [
 
 export default function FormatConverterTab() {
     const requireAuth = useGatedRun();
+    const { getToken } = useAuth();
     const [file, setFile] = useState(null);
     const [format, setFormat] = useState('mp3');
     const [loading, setLoading] = useState(false);
@@ -37,7 +39,9 @@ export default function FormatConverterTab() {
             form.append('audio', file);
             form.append('format', format);
 
-            const resp = await fetch(`${API_BASE}/convert`, { method: 'POST', body: form });
+            const token = await getToken();
+            const headers = token ? { Authorization: `Bearer ${token}` } : {};
+            const resp = await fetch(`${API_BASE}/convert`, { method: 'POST', body: form, headers });
             if (!resp.ok) throw new Error(`API ${resp.status}: ${await resp.text()}`);
 
             const blob = await resp.blob();

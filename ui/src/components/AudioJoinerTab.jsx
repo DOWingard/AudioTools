@@ -1,10 +1,12 @@
 import { useState, useRef } from 'react';
+import { useAuth } from '@clerk/clerk-react';
 import { useGatedRun } from '../AuthContext.jsx';
 
 const API_BASE = '/api';
 
 export default function AudioJoinerTab() {
     const requireAuth = useGatedRun();
+    const { getToken } = useAuth();
     const [files, setFiles] = useState([]);
     const [loading, setLoading] = useState(false);
     const [resultUrl, setResultUrl] = useState(null);
@@ -41,7 +43,9 @@ export default function AudioJoinerTab() {
             const form = new FormData();
             files.forEach((f) => form.append('audio', f));
 
-            const resp = await fetch(`${API_BASE}/join`, { method: 'POST', body: form });
+            const token = await getToken();
+            const headers = token ? { Authorization: `Bearer ${token}` } : {};
+            const resp = await fetch(`${API_BASE}/join`, { method: 'POST', body: form, headers });
             if (!resp.ok) throw new Error(`API ${resp.status}: ${await resp.text()}`);
 
             const blob = await resp.blob();

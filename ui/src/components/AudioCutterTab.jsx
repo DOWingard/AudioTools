@@ -1,6 +1,7 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
 import WaveSurfer from 'wavesurfer.js';
 import RegionsPlugin from 'wavesurfer.js/dist/plugins/regions.esm.js';
+import { useAuth } from '@clerk/clerk-react';
 import { useGatedRun } from '../AuthContext.jsx';
 
 const API_BASE = '/api';
@@ -15,6 +16,7 @@ function fmtTime(sec) {
 
 export default function AudioCutterTab() {
     const requireAuth = useGatedRun();
+    const { getToken } = useAuth();
     const [file, setFile] = useState(null);
     const [audioBlob, setAudioBlob] = useState(null);
     const [start, setStart] = useState('');
@@ -168,7 +170,9 @@ export default function AudioCutterTab() {
             form.append('start', start || '0');
             form.append('end', end || '0');
 
-            const resp = await fetch(`${API_BASE}/cut`, { method: 'POST', body: form });
+            const token = await getToken();
+            const headers = token ? { Authorization: `Bearer ${token}` } : {};
+            const resp = await fetch(`${API_BASE}/cut`, { method: 'POST', body: form, headers });
             if (!resp.ok) throw new Error(`API ${resp.status}: ${await resp.text()}`);
 
             const blob = await resp.blob();

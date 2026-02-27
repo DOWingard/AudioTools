@@ -1,7 +1,5 @@
 # ML model checkpoints & large data (mounted or downloaded at runtime)
 m2d_clap_vit_base-80x1001p16x16p16kpBpTI-2025/
-LARS/
-m2d/
 CLAP/
 *.pt
 *.pth

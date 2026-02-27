@@ -13,6 +13,7 @@ import AudioJoinerTab from './components/AudioJoinerTab.jsx';
 import KaraokeTab from './components/KaraokeTab.jsx';
 import FormatConverterTab from './components/FormatConverterTab.jsx';
 import AudioAnalyzerTab from './components/AudioAnalyzerTab.jsx';
+import MyFilesTab from './components/MyFilesTab.jsx';
 
 const ROUTES = [
     { id: 'synctag', path: '/synctag', label: 'SyncTag' },
@@ -22,6 +23,7 @@ const ROUTES = [
     { id: 'cutter', path: '/cutter', label: 'Cutter' },
     { id: 'joiner', path: '/joiner', label: 'Joiner' },
     { id: 'converter', path: '/converter', label: 'Converter' },
+    { id: 'my-files', path: '/my-files', label: 'My Files' },
 ];
 
 function AppInner() {
@@ -86,6 +88,7 @@ function AppInner() {
                         <Route path="/cutter" element={<AudioCutterTab />} />
                         <Route path="/joiner" element={<AudioJoinerTab />} />
                         <Route path="/converter" element={<FormatConverterTab />} />
+                        <Route path="/my-files" element={<MyFilesTab />} />
                     </Routes>
                 </main>
             </div>
@@ -99,8 +102,14 @@ function AppInner() {
 }
 
 function SubModalWrapper() {
-    const { subModalOpen, setSubModalOpen } = useAuthContext();
-    return <SubscriptionModal open={subModalOpen} onClose={() => setSubModalOpen(false)} />;
+    const { subModalOpen, setSubModalOpen, subModalPlan, setSubModalPlan } = useAuthContext();
+    return (
+        <SubscriptionModal
+            open={subModalOpen}
+            initialPlan={subModalPlan}
+            onClose={() => { setSubModalOpen(false); setSubModalPlan(null); }}
+        />
+    );
 }
 
 export default function App() {

@@ -1,5 +1,6 @@
 import { useState, useRef } from 'react';
 import JSZip from 'jszip';
+import { useAuth } from '@clerk/clerk-react';
 import WaveformPlayer from './WaveformPlayer.jsx';
 import { useGatedRun } from '../AuthContext.jsx';
 
@@ -7,6 +8,7 @@ const API_BASE = '/api';
 
 export default function SyncTagTab() {
     const requireAuth = useGatedRun();
+    const { getToken } = useAuth();
     const [file, setFile] = useState(null);
     const [isrc, setIsrc] = useState('');
     const [loading, setLoading] = useState(false);
@@ -34,7 +36,9 @@ export default function SyncTagTab() {
             form.append('audio', file);
             form.append('isrc', isrc.trim());
 
-            const resp = await fetch(`${API_BASE}/tag`, { method: 'POST', body: form });
+            const token = await getToken();
+            const headers = token ? { Authorization: `Bearer ${token}` } : {};
+            const resp = await fetch(`${API_BASE}/tag`, { method: 'POST', body: form, headers });
 
             if (!resp.ok) {
                 const text = await resp.text();

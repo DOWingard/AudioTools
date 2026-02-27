@@ -1,5 +1,6 @@
 import { useState, useRef } from 'react';
 import JSZip from 'jszip';
+import { useAuth } from '@clerk/clerk-react';
 import WaveformPlayer from './WaveformPlayer.jsx';
 import { useGatedRun } from '../AuthContext.jsx';
 
@@ -31,6 +32,7 @@ const GROUP_META = {
 
 export default function StemSeparatorTab() {
     const requireAuth = useGatedRun();
+    const { getToken } = useAuth();
     const [file, setFile] = useState(null);
     const [loading, setLoading] = useState(false);
     const [progress, setProgress] = useState({ pct: 0, text: '' });
@@ -62,7 +64,9 @@ export default function StemSeparatorTab() {
             const form = new FormData();
             form.append('audio', file);
 
-            const resp = await fetch(`${API_BASE}/separate`, { method: 'POST', body: form });
+            const token = await getToken();
+            const headers = token ? { Authorization: `Bearer ${token}` } : {};
+            const resp = await fetch(`${API_BASE}/separate`, { method: 'POST', body: form, headers });
 
             if (!resp.ok) {
                 const text = await resp.text();

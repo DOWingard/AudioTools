@@ -12,7 +12,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY src/ ./src/
 COPY m2d/ ./m2d/
 COPY demucs/ ./demucs/
-COPY LARS/ ./LARS/
+RUN mkdir -p /app/LARS
 COPY api/ ./api/
 RUN mkdir -p samples
 
@@ -21,8 +21,9 @@ RUN wget -q https://github.com/nttcslab/m2d/releases/download/v0.5.0/m2d_clap_vi
     && unzip -q m2d_clap_vit_base-80x1001p16x16p16kpBpTI-2025.zip \
     && rm m2d_clap_vit_base-80x1001p16x16p16kpBpTI-2025.zip
 
-RUN addgroup --system app && adduser --system --ingroup app app \
-    && chown -R app:app /app
+RUN mkdir -p /data/user_files \
+    && addgroup --system app && adduser --system --ingroup app app \
+    && chown -R app:app /app /data
 
 USER app
 EXPOSE 8000

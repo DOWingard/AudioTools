@@ -17,6 +17,7 @@ fastapi>=0.115.0
 uvicorn[standard]>=0.30.0
 python-multipart>=0.0.9
 httpx>=0.27.0
+qdrant-client>=1.9.0
 # Demucs runtime (installed as local source, these are its deps)
 dora-search>=0.1.12
 diffq>=0.2.1

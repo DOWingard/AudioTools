@@ -1,4 +1,5 @@
 import { useState, useRef } from 'react';
+import { useAuth } from '@clerk/clerk-react';
 import WaveformPlayer from './WaveformPlayer.jsx';
 import { useGatedRun } from '../AuthContext.jsx';
 
@@ -6,6 +7,7 @@ const API_BASE = '/api';
 
 export default function KaraokeTab() {
     const requireAuth = useGatedRun();
+    const { getToken } = useAuth();
     const [file, setFile] = useState(null);
     const [loading, setLoading] = useState(false);
     const [progress, setProgress] = useState({ pct: 0, text: '' });
@@ -32,8 +34,10 @@ export default function KaraokeTab() {
             const form = new FormData();
             form.append('audio', file);
 
+            const token = await getToken();
+            const headers = token ? { Authorization: `Bearer ${token}` } : {};
             setProgress({ pct: 30, text: 'Removing vocals with Demucs AI…' });
-            const resp = await fetch(`${API_BASE}/karaoke`, { method: 'POST', body: form });
+            const resp = await fetch(`${API_BASE}/karaoke`, { method: 'POST', body: form, headers });
             if (!resp.ok) throw new Error(`API ${resp.status}: ${await resp.text()}`);
 
             setProgress({ pct: 90, text: 'Finalizing instrumental track…' });

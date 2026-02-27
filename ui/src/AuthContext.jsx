@@ -7,6 +7,7 @@ export function AuthProvider({ children }) {
     const [signInOpen, setSignInOpen] = useState(false);
     const [limitModalOpen, setLimitModalOpen] = useState(false);
     const [subModalOpen, setSubModalOpen] = useState(false);
+    const [subModalPlan, setSubModalPlan] = useState(null);
     const [profile, setProfile] = useState(null);
 
     const openSignIn = useCallback(() => setSignInOpen(true), []);
@@ -14,11 +15,16 @@ export function AuthProvider({ children }) {
     const openLimitModal = useCallback(() => setLimitModalOpen(true), []);
     const closeLimitModal = useCallback(() => setLimitModalOpen(false), []);
 
+    const openSubModal = useCallback((planId = null) => {
+        setSubModalPlan(planId);
+        setSubModalOpen(true);
+    }, []);
+
     return (
         <AuthContext.Provider value={{
             signInOpen, openSignIn, closeSignIn,
             limitModalOpen, openLimitModal, closeLimitModal,
-            subModalOpen, setSubModalOpen,
+            subModalOpen, setSubModalOpen, subModalPlan, setSubModalPlan, openSubModal,
             profile, setProfile,
         }}>
             {children}
