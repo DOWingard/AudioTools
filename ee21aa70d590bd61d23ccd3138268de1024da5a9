@@ -1,0 +1,35 @@
+ui/src/App.jsx
+  e687717b5ab24ffa 1,4,8,30,49,74,95-96,101-103
+ui/src/AuthContext.jsx
+  e687717b5ab24ffa 8-10,14-15,19-22,34-36,38-82
+database/init.sql
+  e687717b5ab24ffa 8,11-15,25
+ui/src/components/LimitModal.jsx
+  e687717b5ab24ffa 1-137
+auth/main.py
+  e687717b5ab24ffa 8,11-12,33,61,64,67-79,87-97,99-100,102,132,138,143-144,148-173,193,199-234,236-238,240,277,291,314,316,318-319,322-323,331-332,337,339,341-342,344,348-355,358,372,389-390,409
+ui/src/components/UserMenu.jsx
+  e687717b5ab24ffa 10-18,21,33,53,58-68
+auth/requirements.txt
+  e687717b5ab24ffa 9-10
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.1.4",
+  "base_commit_sha": "ee21aa70d590bd61d23ccd3138268de1024da5a9",
+  "prompts": {
+    "e687717b5ab24ffa": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "450a5ee0-f43d-4b34-8614-57407d4ce73a",
+        "model": "claude-sonnet-4-6"
+      },
+      "human_author": "Derek Wingard <derekwingard@gmail.com>",
+      "messages": [],
+      "total_additions": 492,
+      "total_deletions": 201,
+      "accepted_lines": 379,
+      "overriden_lines": 0
+    }
+  }
+}
