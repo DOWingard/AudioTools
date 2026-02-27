@@ -3,6 +3,10 @@ WORKDIR /app
 COPY ui/package.json ui/package-lock.json ./
 RUN npm ci
 COPY ui/ ./
+ARG VITE_CLERK_PUBLISHABLE_KEY
+ARG VITE_STRIPE_PUBLISHABLE_KEY
+ENV VITE_CLERK_PUBLISHABLE_KEY=$VITE_CLERK_PUBLISHABLE_KEY
+ENV VITE_STRIPE_PUBLISHABLE_KEY=$VITE_STRIPE_PUBLISHABLE_KEY
 RUN npm run build
 
 FROM nginx:alpine
@@ -18,6 +22,12 @@ server {
     proxy_set_header Host $host;
     proxy_read_timeout 900s;
     client_max_body_size 500M;
+  }
+
+  location /auth/ {
+    proxy_pass http://auth:8001/auth/;
+    proxy_set_header Host $host;
+    proxy_read_timeout 30s;
   }
 
   location / {

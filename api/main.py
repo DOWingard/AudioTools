@@ -340,8 +340,7 @@ _FORMAT_MAP = {
     "mp3":  {"ext": ".mp3",  "codec": "libmp3lame", "mime": "audio/mpeg"},
     "wav":  {"ext": ".wav",  "codec": "pcm_s16le",  "mime": "audio/wav"},
     "flac": {"ext": ".flac", "codec": "flac",       "mime": "audio/flac"},
-    "ogg":  {"ext": ".ogg",  "codec": "libvorbis",  "mime": "audio/ogg"},
-    "aac":  {"ext": ".m4a",  "codec": "aac",        "mime": "audio/mp4"},
+
 }
 
 @app.post("/api/convert")
@@ -367,10 +366,7 @@ async def convert_audio(
         cmd = ["ffmpeg", "-y", "-i", str(input_path), "-c:a", spec["codec"]]
         if fmt == "mp3":
             cmd += ["-q:a", "2"]  # high quality VBR
-        if fmt == "ogg":
-            cmd += ["-q:a", "6"]
-        if fmt == "aac":
-            cmd += ["-b:a", "192k"]
+
         cmd.append(str(output_path))
 
         subprocess.run(cmd, capture_output=True, check=True)

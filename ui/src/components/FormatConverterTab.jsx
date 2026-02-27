@@ -1,4 +1,5 @@
 import { useState, useRef } from 'react';
+import { useRequireAuth } from '../AuthContext.jsx';
 
 const API_BASE = '/api';
 
@@ -6,11 +7,10 @@ const FORMATS = [
     { id: 'mp3', label: 'MP3', desc: 'Universal, lossy' },
     { id: 'wav', label: 'WAV', desc: 'Lossless, large' },
     { id: 'flac', label: 'FLAC', desc: 'Lossless, compressed' },
-    { id: 'ogg', label: 'OGG', desc: 'Open-source, lossy' },
-    { id: 'aac', label: 'AAC', desc: 'Apple, high quality' },
 ];
 
 export default function FormatConverterTab() {
+    const requireAuth = useRequireAuth();
     const [file, setFile] = useState(null);
     const [format, setFormat] = useState('mp3');
     const [loading, setLoading] = useState(false);
@@ -41,7 +41,7 @@ export default function FormatConverterTab() {
             if (!resp.ok) throw new Error(`API ${resp.status}: ${await resp.text()}`);
 
             const blob = await resp.blob();
-            const ext = format === 'aac' ? 'm4a' : format;
+            const ext = format;
             const name = `${file.name.replace(/\.\w+$/, '')}.${ext}`;
             setResultUrl(URL.createObjectURL(blob));
             setResultName(name);
@@ -86,7 +86,7 @@ export default function FormatConverterTab() {
                         ref={fileRef}
                         type="file"
                         hidden
-                        accept="audio/*,.wav,.flac,.mp3,.ogg,.aif,.aiff,.m4a,.wma,.aac"
+                        accept="audio/*,.wav,.flac,.mp3,.aac,.aif,.aiff,.m4a,.wma,.aac"
                         onChange={(e) => e.target.files[0] && handleFile(e.target.files[0])}
                     />
                 </div>
@@ -111,7 +111,7 @@ export default function FormatConverterTab() {
                     className="btn btn-primary"
                     style={{ marginTop: '1.5rem', width: '100%', justifyContent: 'center' }}
                     disabled={!file || loading}
-                    onClick={run}
+                    onClick={requireAuth(run)}
                 >
                     {loading ? '⏳ Converting…' : `🔄 Convert to ${format.toUpperCase()}`}
                 </button>

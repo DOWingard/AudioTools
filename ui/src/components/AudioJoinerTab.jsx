@@ -1,8 +1,10 @@
 import { useState, useRef } from 'react';
+import { useRequireAuth } from '../AuthContext.jsx';
 
 const API_BASE = '/api';
 
 export default function AudioJoinerTab() {
+    const requireAuth = useRequireAuth();
     const [files, setFiles] = useState([]);
     const [loading, setLoading] = useState(false);
     const [resultUrl, setResultUrl] = useState(null);
@@ -72,13 +74,13 @@ export default function AudioJoinerTab() {
                 >
                     <span className="icon">🔗</span>
                     <span className="label">Click to add audio files</span>
-                    <span className="hint">WAV, FLAC, MP3, OGG, AIF — add multiple</span>
+                    <span className="hint">WAV, FLAC, MP3, AAC, AIF — add multiple</span>
                     <input
                         ref={fileRef}
                         type="file"
                         hidden
                         multiple
-                        accept=".wav,.flac,.mp3,.ogg,.aif,.aiff"
+                        accept=".wav,.flac,.mp3,.aac,.aif,.aiff"
                         onChange={(e) => {
                             if (e.target.files.length) addFiles(e.target.files);
                             e.target.value = '';
@@ -122,7 +124,7 @@ export default function AudioJoinerTab() {
                     className="btn btn-primary"
                     style={{ marginTop: '1.5rem', width: '100%', justifyContent: 'center' }}
                     disabled={files.length < 2 || loading}
-                    onClick={run}
+                    onClick={requireAuth(run)}
                 >
                     {loading ? '⏳ Joining…' : `🔗 Join ${files.length} Files`}
                 </button>

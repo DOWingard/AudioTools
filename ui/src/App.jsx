@@ -1,4 +1,10 @@
+import { useState, useEffect } from 'react';
 import { BrowserRouter as Router, Routes, Route, NavLink, Navigate } from 'react-router-dom';
+import { useUser, useAuth } from '@clerk/clerk-react';
+import { AuthProvider } from './AuthContext.jsx';
+import SignInModal from './components/SignInModal.jsx';
+import UserMenu from './components/UserMenu.jsx';
+import SubscriptionModal from './components/SubscriptionModal.jsx';
 import SyncTagTab from './components/SyncTagTab.jsx';
 import StemSeparatorTab from './components/StemSeparatorTab.jsx';
 import AudioCutterTab from './components/AudioCutterTab.jsx';
@@ -17,7 +23,31 @@ const ROUTES = [
     { id: 'converter', path: '/converter', label: 'Converter' },
 ];
 
-export default function App() {
+function AppInner() {
+    const { isSignedIn } = useUser();
+    const { getToken } = useAuth();
+    const [profile, setProfile] = useState(null);
+    const [subModalOpen, setSubModalOpen] = useState(false);
+
+    // Fetch/provision user record on sign-in
+    useEffect(() => {
+        if (!isSignedIn) {
+            setProfile(null);
+            return;
+        }
+        (async () => {
+            try {
+                const token = await getToken();
+                const resp = await fetch('/auth/user/me', {
+                    headers: { Authorization: `Bearer ${token}` },
+                });
+                if (resp.ok) setProfile(await resp.json());
+            } catch (e) {
+                console.error('Failed to fetch user profile', e);
+            }
+        })();
+    }, [isSignedIn, getToken]);
+
     return (
         <Router>
             <div className="app-shell">
@@ -41,9 +71,7 @@ export default function App() {
                             ))}
                         </nav>
 
-                        <button className="auth-btn" onClick={() => { }}>
-                            Sign In / Sign Up
-                        </button>
+                        <UserMenu profile={profile} onUpgradeClick={() => setSubModalOpen(true)} />
                     </div>
                 </header>
 
@@ -61,6 +89,18 @@ export default function App() {
                     </Routes>
                 </main>
             </div>
+
+            {/* ── Modals ──────────────────────────────────── */}
+            <SignInModal />
+            <SubscriptionModal open={subModalOpen} onClose={() => setSubModalOpen(false)} />
         </Router>
+    );
+}
+
+export default function App() {
+    return (
+        <AuthProvider>
+            <AppInner />
+        </AuthProvider>
     );
 }

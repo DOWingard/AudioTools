@@ -12,7 +12,8 @@ Two industry-standard output formats produced after every pipeline run:
 
 Supported audio containers for ID3 embedding:
   MP3, WAV (ID3 chunk), AIFF  → native ID3v2 frames
-  FLAC, OGG                   → Vorbis Comment equivalents
+  FLAC                        → Vorbis Comment equivalents
+  AAC, M4A                    → ID3v2 or MP4 tags
 """
 
 import csv
@@ -130,8 +131,8 @@ def write_id3_tags(audio_path: Union[str, Path], result: dict) -> Path:
     """
     Embed metadata from *result* into *audio_path* in-place.
 
-    For ID3-capable containers (MP3, WAV, AIFF) native ID3v2 frames are
-    written.  For FLAC / OGG, equivalent Vorbis Comment keys are used.
+    For ID3-capable containers (MP3, WAV, AIFF, AAC) native ID3v2 frames are
+    written.  For FLAC, equivalent Vorbis Comment keys are used.
 
     Parameters
     ----------
@@ -157,10 +158,8 @@ def write_id3_tags(audio_path: Union[str, Path], result: dict) -> Path:
     suffix = audio_path.suffix.lower()
     if suffix == ".flac":
         _tag_vorbis(audio_path, meta, tags_summary, pitch, result)
-    elif suffix == ".ogg":
-        _tag_vorbis(audio_path, meta, tags_summary, pitch, result)
     else:
-        # MP3, WAV (ID3 chunk), AIFF, and most other containers
+        # MP3, WAV (ID3 chunk), AIFF, AAC, M4A and most other containers
         _tag_id3(audio_path, meta, tags_summary, pitch, result)
 
     return audio_path
@@ -234,7 +233,7 @@ def _tag_id3(
     tags.save(str(audio_path))
 
 
-# ---- Vorbis Comment (FLAC / OGG) --------------------------------------- #
+# ---- Vorbis Comment (FLAC) --------------------------------------- #
 
 def _tag_vorbis(
     audio_path: Path,

@@ -1,6 +1,7 @@
 import { useState, useRef } from 'react';
 import JSZip from 'jszip';
 import WaveformPlayer from './WaveformPlayer.jsx';
+import { useRequireAuth } from '../AuthContext.jsx';
 
 const API_BASE = '/api';
 
@@ -29,6 +30,7 @@ const GROUP_META = {
 };
 
 export default function StemSeparatorTab() {
+    const requireAuth = useRequireAuth();
     const [file, setFile] = useState(null);
     const [loading, setLoading] = useState(false);
     const [progress, setProgress] = useState({ pct: 0, text: '' });
@@ -149,13 +151,13 @@ export default function StemSeparatorTab() {
                     >
                         <span className="icon">🎵</span>
                         <span className="label">Drop audio here or click to browse</span>
-                        <span className="hint">WAV, FLAC, MP3, OGG, AIF</span>
+                        <span className="hint">WAV, FLAC, MP3, AAC, AIF</span>
                         {file && <span className="file-name">{file.name}</span>}
                         <input
                             ref={fileRef}
                             type="file"
                             hidden
-                            accept=".wav,.flac,.mp3,.ogg,.aif,.aiff"
+                            accept=".wav,.flac,.mp3,.aac,.aif,.aiff"
                             onChange={(e) => e.target.files[0] && handleFile(e.target.files[0])}
                         />
                     </div>
@@ -164,7 +166,7 @@ export default function StemSeparatorTab() {
                         <button
                             className="btn btn-primary"
                             disabled={!file || loading}
-                            onClick={run}
+                            onClick={requireAuth(run)}
                             style={{ whiteSpace: 'nowrap', width: '100%' }}
                         >
                             {loading ? '⏳ Processing…' : '🔀 Separate Stems'}

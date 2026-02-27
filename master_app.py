@@ -366,7 +366,7 @@ with gr.Blocks(title="Audio Explorer") as demo:
                     upload_files = gr.File(
                         label="Audio files",
                         file_count="multiple",
-                        file_types=["audio", ".wav", ".mp3", ".flac", ".aiff", ".ogg", ".m4a"],
+                        file_types=["audio", ".wav", ".mp3", ".flac", ".aiff", ".aac", ".m4a"],
                     )
                     add_btn = gr.Button("Add to Library", variant="primary")
 

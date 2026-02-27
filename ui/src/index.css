@@ -1066,6 +1066,88 @@ body {
   margin-top: 1rem;
 }
 
+/* ── Audio Cutter Waveform ────────────────────────────────────────────────── */
+
+.cutter-waveform-section {
+  display: flex;
+  flex-direction: column;
+}
+
+.cutter-waveform-wrap {
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  padding: 1rem;
+  overflow: hidden;
+  box-shadow: inset 0 1px 4px rgba(0, 0, 0, 0.04);
+}
+
+.cutter-waveform-canvas {
+  width: 100%;
+  height: 120px;
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+}
+
+/* Region handle overrides — accent-coloured grab handles */
+.cutter-waveform-wrap [data-resize] {
+  width: 6px !important;
+  background: var(--accent) !important;
+  border-radius: 3px;
+  cursor: col-resize;
+  transition: background 0.2s var(--ease), box-shadow 0.2s var(--ease);
+}
+
+.cutter-waveform-wrap [data-resize]:hover {
+  background: var(--accent-dark) !important;
+  box-shadow: 0 0 10px var(--accent-glow);
+}
+
+/* Time info bar */
+.cutter-time-bar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-top: 0.75rem;
+  padding: 0.6rem 0.75rem;
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+}
+
+.cutter-time-tag {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.1rem;
+}
+
+.cutter-time-label {
+  font-size: 0.7rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-muted);
+}
+
+.cutter-time-value {
+  font-size: 1rem;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-primary);
+}
+
+.cutter-time-duration {
+  background: rgba(230, 57, 70, 0.06);
+  padding: 0.35rem 0.85rem;
+  border-radius: var(--radius-full);
+  border: 1px solid rgba(230, 57, 70, 0.15);
+}
+
+.cutter-time-duration .cutter-time-value {
+  color: var(--accent);
+}
+
 /* ── Animations ───────────────────────────────────────────────────────────── */
 
 @keyframes fadeIn {
@@ -1127,4 +1209,48 @@ body {
 a {
   text-decoration: none;
   color: inherit;
+}
+
+/* ── Auth / Subscription modals ───────────────────────────────────────────── */
+
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.55);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+  backdrop-filter: blur(4px);
+}
+
+.modal-content {
+  position: relative;
+  background: var(--bg-card);
+  border-radius: 16px;
+  padding: 2rem;
+  width: 90%;
+  max-width: 480px;
+  max-height: 90vh;
+  overflow-y: auto;
+  box-shadow: 0 24px 64px rgba(0, 0, 0, 0.25);
+}
+
+.modal-close {
+  position: absolute;
+  top: 1rem;
+  right: 1rem;
+  background: transparent;
+  border: none;
+  font-size: 1.25rem;
+  cursor: pointer;
+  color: var(--text-secondary);
+  line-height: 1;
+  padding: 4px 8px;
+  border-radius: 4px;
+}
+
+.modal-close:hover {
+  background: var(--bg-surface);
+  color: var(--text-primary);
 }

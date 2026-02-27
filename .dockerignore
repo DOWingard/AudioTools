@@ -1,0 +1,40 @@
+# ML model checkpoints & large data (mounted or downloaded at runtime)
+m2d_clap_vit_base-80x1001p16x16p16kpBpTI-2025/
+LARS/
+m2d/
+CLAP/
+*.pt
+*.pth
+*.ckpt
+
+# Python artifacts
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+.venv/
+venv/
+.env.local
+
+# Node / build artifacts
+ui/node_modules/
+ui/dist/
+
+# Git & IDE
+.git/
+.gitignore
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Test / docs / CI
+tests/
+docs/
+*.md
+*.jsonl
+*.ipynb
+
+# Misc
+.DS_Store
+*.log

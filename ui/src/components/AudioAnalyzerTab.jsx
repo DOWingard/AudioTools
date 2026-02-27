@@ -1,8 +1,10 @@
 import { useState, useRef } from 'react';
+import { useRequireAuth } from '../AuthContext.jsx';
 
 const API_BASE = '/api';
 
 export default function AudioAnalyzerTab() {
+    const requireAuth = useRequireAuth();
     const [file, setFile] = useState(null);
     const [loading, setLoading] = useState(false);
     const [result, setResult] = useState(null);
@@ -66,7 +68,7 @@ export default function AudioAnalyzerTab() {
                         ref={fileRef}
                         type="file"
                         hidden
-                        accept="audio/*,.wav,.flac,.mp3,.ogg,.aif,.aiff,.m4a"
+                        accept="audio/*,.wav,.flac,.mp3,.aac,.aif,.aiff,.m4a"
                         onChange={(e) => e.target.files[0] && handleFile(e.target.files[0])}
                     />
                 </div>
@@ -75,7 +77,7 @@ export default function AudioAnalyzerTab() {
                     className="btn btn-primary"
                     style={{ marginTop: '1.5rem', width: '100%', justifyContent: 'center' }}
                     disabled={!file || loading}
-                    onClick={run}
+                    onClick={requireAuth(run)}
                 >
                     {loading ? '⏳ Analyzing…' : '📊 Analyze Audio'}
                 </button>

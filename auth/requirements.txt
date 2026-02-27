@@ -1,0 +1,8 @@
+fastapi
+uvicorn[standard]
+asyncpg
+svix
+stripe
+requests
+python-dotenv
+python-jose[cryptography]

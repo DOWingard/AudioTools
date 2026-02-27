@@ -1,9 +1,11 @@
 import { useState, useRef } from 'react';
 import WaveformPlayer from './WaveformPlayer.jsx';
+import { useRequireAuth } from '../AuthContext.jsx';
 
 const API_BASE = '/api';
 
 export default function KaraokeTab() {
+    const requireAuth = useRequireAuth();
     const [file, setFile] = useState(null);
     const [loading, setLoading] = useState(false);
     const [progress, setProgress] = useState({ pct: 0, text: '' });
@@ -77,13 +79,13 @@ export default function KaraokeTab() {
                 >
                     <span className="icon">🎤</span>
                     <span className="label">Drop audio here or click to browse</span>
-                    <span className="hint">WAV, FLAC, MP3, OGG, AIF</span>
+                    <span className="hint">WAV, FLAC, MP3, AAC, AIF</span>
                     {file && <span className="file-name">{file.name}</span>}
                     <input
                         ref={fileRef}
                         type="file"
                         hidden
-                        accept=".wav,.flac,.mp3,.ogg,.aif,.aiff"
+                        accept=".wav,.flac,.mp3,.aac,.aif,.aiff"
                         onChange={(e) => e.target.files[0] && handleFile(e.target.files[0])}
                     />
                 </div>
@@ -92,7 +94,7 @@ export default function KaraokeTab() {
                     className="btn btn-primary"
                     style={{ marginTop: '1.5rem', width: '100%', justifyContent: 'center' }}
                     disabled={!file || loading}
-                    onClick={run}
+                    onClick={requireAuth(run)}
                 >
                     {loading ? '⏳ Processing…' : '🎤 Remove Vocals'}
                 </button>
