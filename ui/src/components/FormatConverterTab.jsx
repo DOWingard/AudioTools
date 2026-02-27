@@ -1,5 +1,5 @@
 import { useState, useRef } from 'react';
-import { useRequireAuth } from '../AuthContext.jsx';
+import { useGatedRun } from '../AuthContext.jsx';
 
 const API_BASE = '/api';
 
@@ -10,7 +10,7 @@ const FORMATS = [
 ];
 
 export default function FormatConverterTab() {
-    const requireAuth = useRequireAuth();
+    const requireAuth = useGatedRun();
     const [file, setFile] = useState(null);
     const [format, setFormat] = useState('mp3');
     const [loading, setLoading] = useState(false);

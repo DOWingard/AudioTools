@@ -1,10 +1,11 @@
-import { useState, useEffect } from 'react';
+import { useEffect } from 'react';
 import { BrowserRouter as Router, Routes, Route, NavLink, Navigate } from 'react-router-dom';
 import { useUser, useAuth } from '@clerk/clerk-react';
-import { AuthProvider } from './AuthContext.jsx';
+import { AuthProvider, useAuthContext } from './AuthContext.jsx';
 import SignInModal from './components/SignInModal.jsx';
 import UserMenu from './components/UserMenu.jsx';
 import SubscriptionModal from './components/SubscriptionModal.jsx';
+import LimitModal from './components/LimitModal.jsx';
 import SyncTagTab from './components/SyncTagTab.jsx';
 import StemSeparatorTab from './components/StemSeparatorTab.jsx';
 import AudioCutterTab from './components/AudioCutterTab.jsx';
@@ -26,8 +27,7 @@ const ROUTES = [
 function AppInner() {
     const { isSignedIn } = useUser();
     const { getToken } = useAuth();
-    const [profile, setProfile] = useState(null);
-    const [subModalOpen, setSubModalOpen] = useState(false);
+    const { profile, setProfile, subModalOpen, setSubModalOpen, limitModalOpen, closeLimitModal } = useAuthContext();
 
     // Fetch/provision user record on sign-in
     useEffect(() => {
@@ -46,7 +46,7 @@ function AppInner() {
                 console.error('Failed to fetch user profile', e);
             }
         })();
-    }, [isSignedIn, getToken]);
+    }, [isSignedIn, getToken, setProfile]);
 
     return (
         <Router>
@@ -71,7 +71,7 @@ function AppInner() {
                             ))}
                         </nav>
 
-                        <UserMenu profile={profile} onUpgradeClick={() => setSubModalOpen(true)} />
+                        <UserMenu />
                     </div>
                 </header>
 
@@ -92,9 +92,15 @@ function AppInner() {
 
             {/* ── Modals ──────────────────────────────────── */}
             <SignInModal />
-            <SubscriptionModal open={subModalOpen} onClose={() => setSubModalOpen(false)} />
+            <SubModalWrapper />
+            <LimitModal open={limitModalOpen} onClose={closeLimitModal} />
         </Router>
     );
+}
+
+function SubModalWrapper() {
+    const { subModalOpen, setSubModalOpen } = useAuthContext();
+    return <SubscriptionModal open={subModalOpen} onClose={() => setSubModalOpen(false)} />;
 }
 
 export default function App() {

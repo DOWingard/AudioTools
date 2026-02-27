@@ -7,9 +7,18 @@ const BADGE_COLOR = {
     premium: '#d97706',
 };
 
-export default function UserMenu({ profile, onUpgradeClick }) {
+function UsageIcon({ remaining }) {
+    const color = remaining === 0 ? '#ef4444' : '#6b7280';
+    return (
+        <span style={{ fontSize: '0.8rem', fontWeight: 700, color, fontFamily: 'monospace' }}>
+            {remaining}/3
+        </span>
+    );
+}
+
+export default function UserMenu() {
     const { isSignedIn } = useUser();
-    const { openSignIn } = useAuthContext();
+    const { openSignIn, profile, setSubModalOpen } = useAuthContext();
 
     if (!isSignedIn) {
         return (
@@ -21,6 +30,7 @@ export default function UserMenu({ profile, onUpgradeClick }) {
 
     const subType = profile?.subscription_type || 'free';
     const badgeColor = BADGE_COLOR[subType] || BADGE_COLOR.free;
+    const remaining = profile?.daily_free_downloads ?? 3;
 
     return (
         <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
@@ -40,12 +50,22 @@ export default function UserMenu({ profile, onUpgradeClick }) {
             </span>
 
             {subType === 'free' && (
-                <button className="auth-btn" onClick={onUpgradeClick}>
+                <button className="auth-btn" onClick={() => setSubModalOpen(true)}>
                     Upgrade
                 </button>
             )}
 
-            <UserButton afterSignOutUrl="/" />
+            <UserButton afterSignOutUrl="/">
+                <UserButton.MenuItems>
+                    {subType === 'free' && (
+                        <UserButton.Action
+                            label="daily uses"
+                            labelIcon={<UsageIcon remaining={remaining} />}
+                            onClick={() => remaining === 0 && setSubModalOpen(true)}
+                        />
+                    )}
+                </UserButton.MenuItems>
+            </UserButton>
         </div>
     );
 }

@@ -1,12 +1,12 @@
 import { useState, useRef } from 'react';
 import JSZip from 'jszip';
 import WaveformPlayer from './WaveformPlayer.jsx';
-import { useRequireAuth } from '../AuthContext.jsx';
+import { useGatedRun } from '../AuthContext.jsx';
 
 const API_BASE = '/api';
 
 export default function SyncTagTab() {
-    const requireAuth = useRequireAuth();
+    const requireAuth = useGatedRun();
     const [file, setFile] = useState(null);
     const [isrc, setIsrc] = useState('');
     const [loading, setLoading] = useState(false);

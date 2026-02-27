@@ -1,7 +1,7 @@
 import { useState, useRef } from 'react';
 import JSZip from 'jszip';
 import WaveformPlayer from './WaveformPlayer.jsx';
-import { useRequireAuth } from '../AuthContext.jsx';
+import { useGatedRun } from '../AuthContext.jsx';
 
 const API_BASE = '/api';
 
@@ -30,7 +30,7 @@ const GROUP_META = {
 };
 
 export default function StemSeparatorTab() {
-    const requireAuth = useRequireAuth();
+    const requireAuth = useGatedRun();
     const [file, setFile] = useState(null);
     const [loading, setLoading] = useState(false);
     const [progress, setProgress] = useState({ pct: 0, text: '' });

@@ -1,11 +1,11 @@
 import { useState, useRef } from 'react';
 import WaveformPlayer from './WaveformPlayer.jsx';
-import { useRequireAuth } from '../AuthContext.jsx';
+import { useGatedRun } from '../AuthContext.jsx';
 
 const API_BASE = '/api';
 
 export default function KaraokeTab() {
-    const requireAuth = useRequireAuth();
+    const requireAuth = useGatedRun();
     const [file, setFile] = useState(null);
     const [loading, setLoading] = useState(false);
     const [progress, setProgress] = useState({ pct: 0, text: '' });

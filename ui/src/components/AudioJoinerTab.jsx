@@ -1,10 +1,10 @@
 import { useState, useRef } from 'react';
-import { useRequireAuth } from '../AuthContext.jsx';
+import { useGatedRun } from '../AuthContext.jsx';
 
 const API_BASE = '/api';
 
 export default function AudioJoinerTab() {
-    const requireAuth = useRequireAuth();
+    const requireAuth = useGatedRun();
     const [files, setFiles] = useState([]);
     const [loading, setLoading] = useState(false);
     const [resultUrl, setResultUrl] = useState(null);
