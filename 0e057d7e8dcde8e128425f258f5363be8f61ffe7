@@ -1,0 +1,71 @@
+auth/main.py
+  e687717b5ab24ffa 1-346
+ui/src/components/KaraokeTab.jsx
+  e687717b5ab24ffa 3,8,97
+ui/.env.local
+  e687717b5ab24ffa 1-2
+Dockerfile.ui
+  e687717b5ab24ffa 6-9,27-32
+ui/src/components/SubscriptionModal.jsx
+  e687717b5ab24ffa 1-11,14-18,21-142
+database/init.sql
+  e687717b5ab24ffa 1-19
+ui/src/App.jsx
+  e687717b5ab24ffa 1,3-7,26-50,74,92-95,99-104
+ui/vite.config.js
+  e687717b5ab24ffa 13-16
+auth/requirements.txt
+  e687717b5ab24ffa 1-8
+ui/src/components/AudioJoinerTab.jsx
+  e687717b5ab24ffa 2,7,127
+.dockerignore
+  e687717b5ab24ffa 1-43
+docker-compose.yml
+  e687717b5ab24ffa 2-41,64-66,75-76,80
+ui/src/components/UserMenu.jsx
+  e687717b5ab24ffa 1-51
+ui/package.json
+  e687717b5ab24ffa 12,14
+ui/src/main.jsx
+  e687717b5ab24ffa 3,7-8,11-13
+ui/src/AuthContext.jsx
+  e687717b5ab24ffa 1-40
+ui/src/components/AudioAnalyzerTab.jsx
+  e687717b5ab24ffa 2,7,80
+ui/src/components/FormatConverterTab.jsx
+  e687717b5ab24ffa 2,13,114
+ui/src/index.css
+  e687717b5ab24ffa 1212-1255
+Dockerfile.auth
+  e687717b5ab24ffa 1-16
+ui/src/components/SyncTagTab.jsx
+  e687717b5ab24ffa 4,9,138
+tests/test_auth_e2e.py
+  e687717b5ab24ffa 1-174
+ui/src/components/StemSeparatorTab.jsx
+  e687717b5ab24ffa 4,33,169
+ui/src/components/AudioCutterTab.jsx
+  e687717b5ab24ffa 4,17,302
+ui/src/components/SignInModal.jsx
+  e687717b5ab24ffa 1-26
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.1.4",
+  "base_commit_sha": "0e057d7e8dcde8e128425f258f5363be8f61ffe7",
+  "prompts": {
+    "e687717b5ab24ffa": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "450a5ee0-f43d-4b34-8614-57407d4ce73a",
+        "model": "claude-sonnet-4-6"
+      },
+      "human_author": "Derek Wingard <derekwingard@gmail.com>",
+      "messages": [],
+      "total_additions": 1118,
+      "total_deletions": 86,
+      "accepted_lines": 1040,
+      "overriden_lines": 4
+    }
+  }
+}
