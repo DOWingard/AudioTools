@@ -1,5 +1,6 @@
 torch>=2.4.0
 torchaudio>=2.4.0
+torchcodec
 transformers>=4.40.0
 timm==0.4.5
 einops>=0.7.0

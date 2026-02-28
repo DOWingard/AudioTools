@@ -26,23 +26,25 @@ const API_BASE = '/api';
 /* ─── Constants ────────────────────────────────────────────────────────────── */
 
 const PROCESS_META = {
-    separate:  { label: 'Stem Separator',  icon: '🎛️', color: '#7c3aed' },
-    tag:       { label: 'SyncTag',          icon: '🏷️', color: '#e63946' },
-    karaoke:   { label: 'Vocal Remover',   icon: '🎤', color: '#2563eb' },
-    cut:       { label: 'Audio Cutter',    icon: '✂️', color: '#059669' },
-    join:      { label: 'Audio Joiner',    icon: '🔗', color: '#d97706' },
+    separate:  { label: 'Stem Separator',   icon: '🎛️', color: '#7c3aed' },
+    tag:       { label: 'SyncTag',           icon: '🏷️', color: '#e63946' },
+    karaoke:   { label: 'Vocal Remover',    icon: '🎤', color: '#2563eb' },
+    cut:       { label: 'Audio Cutter',     icon: '✂️', color: '#059669' },
+    join:      { label: 'Audio Joiner',     icon: '🔗', color: '#d97706' },
     convert:   { label: 'Format Converter', icon: '🔄', color: '#0891b2' },
+    analyze:   { label: 'Track Analyzer',   icon: '📊', color: '#f59e0b' },
 };
 
 const SUBGROUP_META = {
-    main:         { label: 'Main Stems',   color: '#7c3aed' },
-    drums:        { label: 'Drum Stems',   color: '#2563eb' },
-    oneshots:     { label: 'One-Shots',    color: '#059669' },
-    tagged:       { label: 'Tagged Track', color: '#e63946' },
-    instrumental: { label: 'Instrumental', color: '#2563eb' },
-    trimmed:      { label: 'Trimmed',      color: '#059669' },
-    joined:       { label: 'Joined',       color: '#d97706' },
-    converted:    { label: 'Converted',    color: '#0891b2' },
+    main:         { label: 'Main Stems',    color: '#7c3aed' },
+    drums:        { label: 'Drum Stems',    color: '#2563eb' },
+    oneshots:     { label: 'One-Shots',     color: '#059669' },
+    tagged:       { label: 'Tagged Track',  color: '#e63946' },
+    instrumental: { label: 'Instrumental',  color: '#2563eb' },
+    trimmed:      { label: 'Trimmed',       color: '#059669' },
+    joined:       { label: 'Joined',        color: '#d97706' },
+    converted:    { label: 'Converted',     color: '#0891b2' },
+    analyzed:     { label: 'Analyzed',      color: '#f59e0b' },
 };
 
 const PROCESS_SUBGROUP_ORDER = {
@@ -52,6 +54,7 @@ const PROCESS_SUBGROUP_ORDER = {
     cut:      ['trimmed'],
     join:     ['joined'],
     convert:  ['converted'],
+    analyze:  ['analyzed'],
 };
 
 /* ─── Helpers ───────────────────────────────────────────────────────────────── */
@@ -500,7 +503,7 @@ function SearchPanel({ token, results, hasMore, searchLoading, onSearch, onLoadM
 
 /* ─── SmartGraph view (premium) ─────────────────────────────────────────── */
 
-function SmartGraph({ token, nowPlaying, loadingId, onPlay }) {
+function SmartGraph({ token, nowPlaying, loadingId, onPlay, graphRefreshKey }) {
     const [graphData, setGraphData] = useState(null);
     const [graphLoading, setGraphLoading] = useState(true);
     const [graphError, setGraphError] = useState('');
@@ -525,7 +528,7 @@ function SmartGraph({ token, nowPlaying, loadingId, onPlay }) {
         graphRef.current?.refresh();
     }, [highlightedIds, nowPlaying?.id]);
 
-    // Fetch graph data on mount
+    // Fetch graph data on mount and whenever graphRefreshKey increments
     useEffect(() => {
         if (!token) return;
         (async () => {
@@ -544,7 +547,7 @@ function SmartGraph({ token, nowPlaying, loadingId, onPlay }) {
                 setGraphLoading(false);
             }
         })();
-    }, [token]);
+    }, [token, graphRefreshKey]);
 
     // nodeThreeObject — reads from refs, never becomes stale
     const nodeThreeObject = useCallback((node) => {
@@ -835,6 +838,73 @@ export default function MyFilesTab() {
 
     useEffect(() => { fetchFiles(); }, [fetchFiles]);
 
+    // ── Background-embedding poller ────────────────────────────────────────
+    // Processing tabs fire window.dispatchEvent(new CustomEvent('audioProcessed'))
+    // and write localStorage.lastProcessedAt so this tab knows to start polling
+    // until all background embeddings are committed to Qdrant.
+
+    const filesLengthRef = useRef(0);
+    const pollingTimerRef = useRef(null);
+    const stableCountRef = useRef(0);
+    const [graphRefreshKey, setGraphRefreshKey] = useState(0);
+    const [isPolling, setIsPolling] = useState(false);
+
+    // Track file count changes: bump graphRefreshKey when new files arrive;
+    // stop polling when count is stable for 3 consecutive 4-second polls.
+    useEffect(() => {
+        const prev = filesLengthRef.current;
+        const next = files.length;
+        if (next > prev) {
+            // New files arrived — trigger graph refresh if polling is active
+            if (pollingTimerRef.current !== null) {
+                setGraphRefreshKey(k => k + 1);
+            }
+            stableCountRef.current = 0;
+        } else if (pollingTimerRef.current !== null) {
+            stableCountRef.current += 1;
+            if (stableCountRef.current >= 3) {
+                clearInterval(pollingTimerRef.current);
+                pollingTimerRef.current = null;
+                setIsPolling(false);
+            }
+        }
+        filesLengthRef.current = next;
+    }, [files]); // eslint-disable-line react-hooks/exhaustive-deps
+
+    const startPolling = useCallback(() => {
+        if (pollingTimerRef.current) return; // already running
+        stableCountRef.current = 0;
+        setIsPolling(true);
+        pollingTimerRef.current = setInterval(() => { fetchFiles(); }, 4000);
+        // Safety cap: stop after 5 minutes regardless
+        setTimeout(() => {
+            if (pollingTimerRef.current) {
+                clearInterval(pollingTimerRef.current);
+                pollingTimerRef.current = null;
+                setIsPolling(false);
+            }
+        }, 300_000);
+    }, [fetchFiles]);
+
+    // Start polling when a processing tab signals completion, or if this tab
+    // mounts within 5 minutes of the last processing event (tab-switch case).
+    useEffect(() => {
+        const handler = () => { if (isSignedIn) startPolling(); };
+        window.addEventListener('audioProcessed', handler);
+
+        const lastProcessed = Number(localStorage.getItem('lastProcessedAt') || 0);
+        if (isSignedIn && Date.now() - lastProcessed < 300_000) {
+            startPolling();
+        }
+
+        return () => window.removeEventListener('audioProcessed', handler);
+    }, [startPolling, isSignedIn]);
+
+    // Cleanup timer if the component unmounts
+    useEffect(() => () => {
+        if (pollingTimerRef.current) clearInterval(pollingTimerRef.current);
+    }, []);
+
     // Load audio for a file (from either list or graph)
     const handlePlay = useCallback(async (file) => {
         // If clicking the already-playing file, just surface the bar (don't re-fetch)
@@ -914,6 +984,11 @@ export default function MyFilesTab() {
                             {files.length === 0 && !filesLoading
                                 ? 'No files yet — use any tool to start building your library.'
                                 : `${files.length} file${files.length !== 1 ? 's' : ''} stored`}
+                            {isPolling && (
+                                <span className="loading-pulse" style={{ marginLeft: '0.5rem', color: 'var(--text-muted)' }}>
+                                    · syncing…
+                                </span>
+                            )}
                         </p>
                     </div>
 
@@ -990,6 +1065,7 @@ export default function MyFilesTab() {
                         nowPlaying={nowPlaying}
                         loadingId={loadingId}
                         onPlay={handlePlay}
+                        graphRefreshKey={graphRefreshKey}
                     />
                 </div>
             )}

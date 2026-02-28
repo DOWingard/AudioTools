@@ -49,6 +49,8 @@ export default function FormatConverterTab() {
             const name = `${file.name.replace(/\.\w+$/, '')}.${ext}`;
             setResultUrl(URL.createObjectURL(blob));
             setResultName(name);
+            localStorage.setItem('lastProcessedAt', String(Date.now()));
+            window.dispatchEvent(new CustomEvent('audioProcessed'));
         } catch (e) {
             setError(e.message);
         } finally {

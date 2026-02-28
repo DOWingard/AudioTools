@@ -134,9 +134,15 @@ async def _resolve_user_id(token: str) -> Optional[str]:
                 timeout=5.0,
             )
             if resp.status_code == 200:
-                return resp.json().get("clerk_id")
+                data = resp.json()
+                clerk_id = data.get("clerk_id")
+                if not clerk_id:
+                    print(f"[auth] /auth/user/me returned 200 but no clerk_id — payload: {data}")
+                return clerk_id
+            else:
+                print(f"[auth] /auth/user/me returned HTTP {resp.status_code}: {resp.text[:200]}")
     except Exception as exc:
-        print(f"[qdrant] User resolution failed: {exc}")
+        print(f"[auth] User resolution failed (network/timeout): {exc}")
     return None
 
 
@@ -191,11 +197,15 @@ def _embed_and_store_sync(
     subgroup: str,
     original_filename: str,
     job_id: str,
+    extra_payload: Optional[dict] = None,
 ) -> None:
     """
     Synchronous: embed an audio file with M2D-CLAP and upsert into Qdrant.
     Designed to run in a thread-pool executor so it doesn't block the event loop.
+    extra_payload: optional dict of additional fields merged into the Qdrant payload.
     """
+    import traceback
+    print(f"[qdrant] Starting embed: {file_path.name} ({process_type}/{subgroup}) user={user_id}")
     try:
         from qdrant_client.models import PointStruct
 
@@ -208,6 +218,21 @@ def _embed_and_store_sync(
         # Deterministic ID: same file + user always maps to same Qdrant point
         point_id = str(_uuid.uuid5(_uuid.NAMESPACE_URL, f"{user_id}:{file_path}"))
 
+        payload = {
+            "user_id": user_id,
+            "filename": file_path.name,
+            "original_filename": original_filename,
+            "process_type": process_type,
+            "subgroup": subgroup,
+            "file_path": str(file_path),
+            "job_id": job_id,
+            "created_at": datetime.now(timezone.utc).isoformat(),
+            "duration": round(duration, 2),
+            "file_size": file_path.stat().st_size,
+        }
+        if extra_payload:
+            payload.update(extra_payload)
+
         qdrant = _get_qdrant()
         qdrant.upsert(
             collection_name=COLLECTION_NAME,
@@ -215,24 +240,14 @@ def _embed_and_store_sync(
                 PointStruct(
                     id=point_id,
                     vector=embedding.tolist(),
-                    payload={
-                        "user_id": user_id,
-                        "filename": file_path.name,
-                        "original_filename": original_filename,
-                        "process_type": process_type,
-                        "subgroup": subgroup,
-                        "file_path": str(file_path),
-                        "job_id": job_id,
-                        "created_at": datetime.now(timezone.utc).isoformat(),
-                        "duration": round(duration, 2),
-                        "file_size": file_path.stat().st_size,
-                    },
+                    payload=payload,
                 )
             ],
         )
-        print(f"[qdrant] Stored {file_path.name} ({process_type}/{subgroup}) for {user_id}")
+        print(f"[qdrant] ✓ Stored {file_path.name} ({process_type}/{subgroup}) for {user_id} — point_id={point_id}")
     except Exception as exc:
-        print(f"[qdrant] Embedding failed for {file_path}: {exc}")
+        print(f"[qdrant] ✗ Embedding failed for {file_path}: {exc}")
+        traceback.print_exc()
 
 
 async def _schedule_embed(
@@ -242,14 +257,24 @@ async def _schedule_embed(
     subgroup: str,
     original_filename: str,
     job_id: str,
+    extra_payload: Optional[dict] = None,
 ) -> None:
     """Schedule a single file embedding in the background thread pool."""
-    loop = asyncio.get_event_loop()
-    loop.run_in_executor(
+    loop = asyncio.get_running_loop()
+    future = loop.run_in_executor(
         _embed_pool,
         _embed_and_store_sync,
-        file_path, user_id, process_type, subgroup, original_filename, job_id,
+        file_path, user_id, process_type, subgroup, original_filename, job_id, extra_payload,
     )
+
+    def _on_done(fut: asyncio.Future) -> None:
+        exc = fut.exception()
+        if exc:
+            import traceback
+            print(f"[qdrant] Thread-pool future raised for {file_path.name}: {exc}")
+            traceback.print_exception(type(exc), exc, exc.__traceback__)
+
+    future.add_done_callback(_on_done)
 
 
 def _stem_subgroup(stem_key: str) -> str:
@@ -291,6 +316,13 @@ async def tag_audio(
     """
     tmp_dir = Path(tempfile.mkdtemp(prefix="api_tag_"))
     try:
+        # Resolve user NOW — before heavy computation — so the Clerk JWT (60s TTL)
+        # doesn't expire during the SyncTag pipeline (which can take 100+ seconds).
+        user_id = None
+        if authorization:
+            token = authorization.removeprefix("Bearer ").strip()
+            user_id = await _resolve_user_id(token)
+
         # Save upload
         input_path = tmp_dir / (audio.filename or "input.wav")
         content = await audio.read()
@@ -321,15 +353,12 @@ async def tag_audio(
         meta_path.write_text(json.dumps(result, indent=2, default=str))
 
         # Persist tagged audio + schedule embedding if authenticated
-        if authorization:
-            token = authorization.removeprefix("Bearer ").strip()
-            user_id = await _resolve_user_id(token)
-            if user_id:
-                job_id = str(_uuid.uuid4())
-                dest = _persist_file(user_id, "tag", job_id, input_path.name, input_path)
-                asyncio.create_task(
-                    _schedule_embed(dest, user_id, "tag", "tagged", audio.filename or "input.wav", job_id)
-                )
+        if user_id:
+            job_id = str(_uuid.uuid4())
+            dest = _persist_file(user_id, "tag", job_id, input_path.name, input_path)
+            asyncio.create_task(
+                _schedule_embed(dest, user_id, "tag", "tagged", audio.filename or "input.wav", job_id)
+            )
 
         # Pack into ZIP
         buf = io.BytesIO()
@@ -372,6 +401,13 @@ async def separate_audio(
     try:
         import torch
 
+        # Resolve user NOW — before heavy computation — so the Clerk JWT (60s TTL)
+        # doesn't expire during Demucs + LARS pipeline (which takes 60-180+ seconds).
+        user_id = None
+        if authorization:
+            token = authorization.removeprefix("Bearer ").strip()
+            user_id = await _resolve_user_id(token)
+
         # Save upload
         input_path = tmp_dir / (audio.filename or "input.wav")
         content = await audio.read()
@@ -384,22 +420,19 @@ async def separate_audio(
         all_files = run_pipeline(input_path, output_dir, device=device)
 
         # Persist + schedule embedding if authenticated
-        if authorization:
-            token = authorization.removeprefix("Bearer ").strip()
-            user_id = await _resolve_user_id(token)
-            if user_id:
-                job_id = str(_uuid.uuid4())
-                for stem_key, filepath in all_files.items():
-                    p = Path(filepath)
-                    if p.exists():
-                        subgroup = _stem_subgroup(stem_key)
-                        dest = _persist_file(user_id, "separate", job_id, f"{stem_key}.wav", p)
-                        asyncio.create_task(
-                            _schedule_embed(
-                                dest, user_id, "separate", subgroup,
-                                audio.filename or "input.wav", job_id,
-                            )
+        if user_id:
+            job_id = str(_uuid.uuid4())
+            for stem_key, filepath in all_files.items():
+                p = Path(filepath)
+                if p.exists():
+                    subgroup = _stem_subgroup(stem_key)
+                    dest = _persist_file(user_id, "separate", job_id, f"{stem_key}.wav", p)
+                    asyncio.create_task(
+                        _schedule_embed(
+                            dest, user_id, "separate", subgroup,
+                            audio.filename or "input.wav", job_id,
                         )
+                    )
 
         # Pack all existing stem files into ZIP
         buf = io.BytesIO()
@@ -437,6 +470,11 @@ async def cut_audio(
     """Trim audio to the specified start/end times (seconds). Returns WAV."""
     tmp_dir = Path(tempfile.mkdtemp(prefix="api_cut_"))
     try:
+        user_id = None
+        if authorization:
+            token = authorization.removeprefix("Bearer ").strip()
+            user_id = await _resolve_user_id(token)
+
         input_path = tmp_dir / (audio.filename or "input.wav")
         content = await audio.read()
         input_path.write_bytes(content)
@@ -454,15 +492,12 @@ async def cut_audio(
         subprocess.run(cmd, capture_output=True, check=True)
 
         # Persist + schedule embedding if authenticated
-        if authorization:
-            token = authorization.removeprefix("Bearer ").strip()
-            user_id = await _resolve_user_id(token)
-            if user_id:
-                job_id = str(_uuid.uuid4())
-                dest = _persist_file(user_id, "cut", job_id, output_path.name, output_path)
-                asyncio.create_task(
-                    _schedule_embed(dest, user_id, "cut", "trimmed", audio.filename or "input.wav", job_id)
-                )
+        if user_id:
+            job_id = str(_uuid.uuid4())
+            dest = _persist_file(user_id, "cut", job_id, output_path.name, output_path)
+            asyncio.create_task(
+                _schedule_embed(dest, user_id, "cut", "trimmed", audio.filename or "input.wav", job_id)
+            )
 
         buf = io.BytesIO(output_path.read_bytes())
         return StreamingResponse(
@@ -492,6 +527,11 @@ async def join_audio(
         raise HTTPException(status_code=400, detail="At least 2 audio files required.")
     tmp_dir = Path(tempfile.mkdtemp(prefix="api_join_"))
     try:
+        user_id = None
+        if authorization:
+            token = authorization.removeprefix("Bearer ").strip()
+            user_id = await _resolve_user_id(token)
+
         # Save all uploads
         input_paths = []
         for i, f in enumerate(audio):
@@ -527,16 +567,13 @@ async def join_audio(
         )
 
         # Persist + schedule embedding if authenticated
-        if authorization:
-            token = authorization.removeprefix("Bearer ").strip()
-            user_id = await _resolve_user_id(token)
-            if user_id:
-                job_id = str(_uuid.uuid4())
-                dest = _persist_file(user_id, "join", job_id, "joined.wav", output_path)
-                original = ", ".join(f.filename or "input" for f in audio[:3])
-                asyncio.create_task(
-                    _schedule_embed(dest, user_id, "join", "joined", original, job_id)
-                )
+        if user_id:
+            job_id = str(_uuid.uuid4())
+            dest = _persist_file(user_id, "join", job_id, "joined.wav", output_path)
+            original = ", ".join(f.filename or "input" for f in audio[:3])
+            asyncio.create_task(
+                _schedule_embed(dest, user_id, "join", "joined", original, job_id)
+            )
 
         buf = io.BytesIO(output_path.read_bytes())
         return StreamingResponse(
@@ -566,6 +603,12 @@ async def karaoke_audio(
     try:
         import torch
 
+        # Resolve user NOW — before Demucs (60-180s) — so the Clerk JWT (60s TTL) is fresh.
+        user_id = None
+        if authorization:
+            token = authorization.removeprefix("Bearer ").strip()
+            user_id = await _resolve_user_id(token)
+
         input_path = tmp_dir / (audio.filename or "input.wav")
         content = await audio.read()
         input_path.write_bytes(content)
@@ -593,15 +636,12 @@ async def karaoke_audio(
         torchaudio.save(str(output_path), instrumental, sr)
 
         # Persist + schedule embedding if authenticated
-        if authorization:
-            token = authorization.removeprefix("Bearer ").strip()
-            user_id = await _resolve_user_id(token)
-            if user_id:
-                job_id = str(_uuid.uuid4())
-                dest = _persist_file(user_id, "karaoke", job_id, output_path.name, output_path)
-                asyncio.create_task(
-                    _schedule_embed(dest, user_id, "karaoke", "instrumental", audio.filename or "input.wav", job_id)
-                )
+        if user_id:
+            job_id = str(_uuid.uuid4())
+            dest = _persist_file(user_id, "karaoke", job_id, output_path.name, output_path)
+            asyncio.create_task(
+                _schedule_embed(dest, user_id, "karaoke", "instrumental", audio.filename or "input.wav", job_id)
+            )
 
         buf = io.BytesIO(output_path.read_bytes())
         return StreamingResponse(
@@ -639,6 +679,11 @@ async def convert_audio(
     spec = _FORMAT_MAP[fmt]
     tmp_dir = Path(tempfile.mkdtemp(prefix="api_convert_"))
     try:
+        user_id = None
+        if authorization:
+            token = authorization.removeprefix("Bearer ").strip()
+            user_id = await _resolve_user_id(token)
+
         input_path = tmp_dir / (audio.filename or "input.wav")
         content = await audio.read()
         input_path.write_bytes(content)
@@ -655,15 +700,12 @@ async def convert_audio(
         subprocess.run(cmd, capture_output=True, check=True)
 
         # Persist + schedule embedding if authenticated
-        if authorization:
-            token = authorization.removeprefix("Bearer ").strip()
-            user_id = await _resolve_user_id(token)
-            if user_id:
-                job_id = str(_uuid.uuid4())
-                dest = _persist_file(user_id, "convert", job_id, output_path.name, output_path)
-                asyncio.create_task(
-                    _schedule_embed(dest, user_id, "convert", "converted", audio.filename or "input.wav", job_id)
-                )
+        if user_id:
+            job_id = str(_uuid.uuid4())
+            dest = _persist_file(user_id, "convert", job_id, output_path.name, output_path)
+            asyncio.create_task(
+                _schedule_embed(dest, user_id, "convert", "converted", audio.filename or "input.wav", job_id)
+            )
 
         buf = io.BytesIO(output_path.read_bytes())
         return StreamingResponse(
@@ -1000,15 +1042,43 @@ def _analyze_audio(audio_path: str) -> dict:
 @app.post("/api/analyze")
 async def analyze_audio(
     audio: UploadFile = File(...),
+    authorization: str = Header(default=None),
 ):
-    """Comprehensive audio analysis returning BPM, key, loudness, spectral info."""
+    """Comprehensive audio analysis returning BPM, key, loudness, spectral info.
+    When an Authorization token is provided, the original audio file is persisted
+    and embedded into Qdrant with the analysis results stored in the payload.
+    """
     tmp_dir = Path(tempfile.mkdtemp(prefix="api_analyze_"))
     try:
+        user_id = None
+        if authorization:
+            token = authorization.removeprefix("Bearer ").strip()
+            user_id = await _resolve_user_id(token)
+
         input_path = tmp_dir / (audio.filename or "input.wav")
         content = await audio.read()
         input_path.write_bytes(content)
 
         result = _analyze_audio(str(input_path))
+
+        # Persist original + schedule embedding if authenticated
+        if user_id:
+            job_id = str(_uuid.uuid4())
+            dest = _persist_file(user_id, "analyze", job_id, input_path.name, input_path)
+            extra = {
+                k: result[k] for k in (
+                    "bpm", "key", "key_confidence", "key_source", "tempo_category",
+                    "energy_rating", "lufs", "rms_db", "peak_db", "brightness_hz",
+                    "sample_rate", "channels", "codec",
+                ) if k in result
+            }
+            asyncio.create_task(
+                _schedule_embed(
+                    dest, user_id, "analyze", "analyzed",
+                    audio.filename or "input.wav", job_id, extra,
+                )
+            )
+
         return JSONResponse(result)
 
     except Exception as exc:

@@ -1,10 +1,12 @@
 import { useState, useRef } from 'react';
+import { useAuth } from '@clerk/clerk-react';
 import { useGatedRun } from '../AuthContext.jsx';
 
 const API_BASE = '/api';
 
 export default function AudioAnalyzerTab() {
     const requireAuth = useGatedRun();
+    const { getToken } = useAuth();
     const [file, setFile] = useState(null);
     const [loading, setLoading] = useState(false);
     const [result, setResult] = useState(null);
@@ -28,11 +30,15 @@ export default function AudioAnalyzerTab() {
             const form = new FormData();
             form.append('audio', file);
 
-            const resp = await fetch(`${API_BASE}/analyze`, { method: 'POST', body: form });
+            const token = await getToken();
+            const headers = token ? { Authorization: `Bearer ${token}` } : {};
+            const resp = await fetch(`${API_BASE}/analyze`, { method: 'POST', body: form, headers });
             if (!resp.ok) throw new Error(`API ${resp.status}: ${await resp.text()}`);
 
             const data = await resp.json();
             setResult(data);
+            localStorage.setItem('lastProcessedAt', String(Date.now()));
+            window.dispatchEvent(new CustomEvent('audioProcessed'));
         } catch (e) {
             setError(e.message);
         } finally {

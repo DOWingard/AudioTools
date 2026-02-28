@@ -50,6 +50,8 @@ export default function AudioJoinerTab() {
 
             const blob = await resp.blob();
             setResultUrl(URL.createObjectURL(blob));
+            localStorage.setItem('lastProcessedAt', String(Date.now()));
+            window.dispatchEvent(new CustomEvent('audioProcessed'));
         } catch (e) {
             setError(e.message);
         } finally {

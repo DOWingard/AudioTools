@@ -91,6 +91,8 @@ export default function StemSeparatorTab() {
             setProgress({ pct: 100, text: 'Done!' });
             setStems(extracted);
             setStatus(`✅ Separated ${Object.keys(extracted).length} stems from ${file.name}`);
+            localStorage.setItem('lastProcessedAt', String(Date.now()));
+            window.dispatchEvent(new CustomEvent('audioProcessed'));
         } catch (e) {
             setError(e.message);
         } finally {

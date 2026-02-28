@@ -75,6 +75,8 @@ export default function SyncTagTab() {
 
             setProgress({ pct: 100, text: 'Done!' });
             setResult({ meta, audioBlob, audioName, csvBlob, csvName });
+            localStorage.setItem('lastProcessedAt', String(Date.now()));
+            window.dispatchEvent(new CustomEvent('audioProcessed'));
         } catch (e) {
             setError(e.message);
         } finally {

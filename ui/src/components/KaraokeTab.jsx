@@ -46,6 +46,8 @@ export default function KaraokeTab() {
             setResultBlob(blob);
             setResultName(name);
             setProgress({ pct: 100, text: 'Done!' });
+            localStorage.setItem('lastProcessedAt', String(Date.now()));
+            window.dispatchEvent(new CustomEvent('audioProcessed'));
         } catch (e) {
             setError(e.message);
         } finally {

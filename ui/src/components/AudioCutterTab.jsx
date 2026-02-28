@@ -179,6 +179,8 @@ export default function AudioCutterTab() {
             const name = `${file.name.replace(/\.\w+$/, '')}_trimmed.wav`;
             setResultUrl(URL.createObjectURL(blob));
             setResultName(name);
+            localStorage.setItem('lastProcessedAt', String(Date.now()));
+            window.dispatchEvent(new CustomEvent('audioProcessed'));
         } catch (e) {
             setError(e.message);
         } finally {

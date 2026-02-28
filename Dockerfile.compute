@@ -21,9 +21,9 @@ RUN wget -q https://github.com/nttcslab/m2d/releases/download/v0.5.0/m2d_clap_vi
     && unzip -q m2d_clap_vit_base-80x1001p16x16p16kpBpTI-2025.zip \
     && rm m2d_clap_vit_base-80x1001p16x16p16kpBpTI-2025.zip
 
-RUN mkdir -p /data/user_files \
-    && addgroup --system app && adduser --system --ingroup app app \
-    && chown -R app:app /app /data
+RUN mkdir -p /data/user_files /home/app \
+    && addgroup --system app && adduser --system --home /home/app --ingroup app app \
+    && chown -R app:app /app /data /home/app
 
 USER app
 EXPOSE 8000
