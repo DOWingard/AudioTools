@@ -77,6 +77,8 @@ services:
     env_file: .env
     environment:
       - DATABASE_URL=postgresql://${POSTGRES_USER:-syntag}:${POSTGRES_PASSWORD:-syntag_secret}@postgres:5432/${POSTGRES_DB:-syntag}
+      - COMPUTE_API_URL=http://compute:8000
+      - INTERNAL_SECRET=${INTERNAL_SECRET:-}
     depends_on:
       postgres:
         condition: service_healthy
@@ -109,6 +111,7 @@ services:
       - R2_SECRET_ACCESS_KEY=${R2_SECRET_ACCESS_KEY:-minioadmin}
       # Dev/test bypass: set to a clerk_id to skip Clerk JWT validation in endpoints
       - DEV_USER_ID=${DEV_USER_ID:-}
+      - INTERNAL_SECRET=${INTERNAL_SECRET:-}
     volumes:
       - ./LARS:/app/LARS:ro
     depends_on:

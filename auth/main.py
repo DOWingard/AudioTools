@@ -1,10 +1,13 @@
 import base64
+import hashlib
 import os
 import logging
+import time
 from contextlib import asynccontextmanager
 from typing import Optional
 
 import asyncpg
+import httpx
 import pytz
 import requests
 import stripe
@@ -30,6 +33,8 @@ STRIPE_WEBHOOK_SECRET = os.environ.get("STRIPE_WEBHOOK_SECRET", "")
 STRIPE_PRICE_STANDARD = os.environ.get("STRIPE_PRICE_ID_STANDARD", "")
 STRIPE_PRICE_PREMIUM  = os.environ.get("STRIPE_PRICE_ID_PREMIUM", "")
 APP_URL               = os.environ.get("APP_URL", "http://localhost:7860")
+COMPUTE_API_URL       = os.environ.get("COMPUTE_API_URL", "http://localhost:8000")
+INTERNAL_SECRET       = os.environ.get("INTERNAL_SECRET", "")
 DAILY_FREE_QUOTA      = 3
 
 stripe.api_key = STRIPE_SECRET_KEY
@@ -295,6 +300,17 @@ async def clerk_webhook(request: Request):
         async with db_pool.acquire() as conn:
             await conn.execute("DELETE FROM users WHERE clerk_id = $1", clerk_id)
         log.info("Deleted user clerk_id=%s", clerk_id)
+        # Fire-and-forget: purge Qdrant vectors and S3 objects from compute API
+        if INTERNAL_SECRET:
+            async with httpx.AsyncClient() as http:
+                try:
+                    await http.delete(
+                        f"{COMPUTE_API_URL}/internal/users/{clerk_id}",
+                        headers={"x-internal-secret": INTERNAL_SECRET},
+                        timeout=10.0,
+                    )
+                except Exception as e:
+                    log.error("Failed to purge user data for %s: %s", clerk_id, e)
 
     return Response(status_code=200)
 
@@ -357,6 +373,34 @@ async def stripe_webhook(request: Request, stripe_signature: str = Header(None))
             )
         log.info("stripe subscription.deleted for customer %s → cancelled", stripe_customer_id)
 
+    elif event_type == "invoice.payment_failed":
+        stripe_customer_id = obj.get("customer")
+        async with db_pool.acquire() as conn:
+            await conn.execute(
+                """
+                UPDATE users
+                SET subscription_active = FALSE,
+                    subscription_status = 'past_due'
+                WHERE stripe_id = $1
+                """,
+                stripe_customer_id,
+            )
+        log.warning("invoice.payment_failed for customer %s — access suspended", stripe_customer_id)
+
+    elif event_type == "invoice.payment_succeeded":
+        stripe_customer_id = obj.get("customer")
+        async with db_pool.acquire() as conn:
+            await conn.execute(
+                """
+                UPDATE users
+                SET subscription_active = TRUE,
+                    subscription_status = 'active'
+                WHERE stripe_id = $1 AND subscription_status = 'past_due'
+                """,
+                stripe_customer_id,
+            )
+        log.info("invoice.payment_succeeded for customer %s — access restored", stripe_customer_id)
+
     return Response(status_code=200)
 
 
@@ -389,7 +433,14 @@ async def create_checkout(request: Request, authorization: str = Header(...)):
     if row["stripe_id"]:
         session_kwargs["customer"] = row["stripe_id"]
 
-    session = stripe.checkout.Session.create(**session_kwargs)
+    window = int(time.time()) // 600  # 10-minute dedup window
+    idempotency_key = hashlib.sha256(
+        f"checkout:{clerk_id}:{plan}:{window}".encode()
+    ).hexdigest()
+    session = stripe.checkout.Session.create(
+        **session_kwargs,
+        idempotency_key=idempotency_key,
+    )
     return {"client_secret": session.client_secret}
 
 
@@ -406,5 +457,13 @@ async def create_portal(authorization: str = Header(...)):
     if not row or not row["stripe_id"]:
         raise HTTPException(status_code=404, detail="No Stripe customer found")
 
-    portal = stripe.billing_portal.Session.create(customer=row["stripe_id"], return_url=APP_URL)
+    window = int(time.time()) // 60  # 1-minute dedup window
+    idempotency_key = hashlib.sha256(
+        f"portal:{clerk_id}:{window}".encode()
+    ).hexdigest()
+    portal = stripe.billing_portal.Session.create(
+        customer=row["stripe_id"],
+        return_url=APP_URL,
+        idempotency_key=idempotency_key,
+    )
     return {"url": portal.url}

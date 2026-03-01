@@ -421,7 +421,7 @@ GET /api/files/graph
 
 `*` = subject to `daily_free_downloads` quota (3/day, reset at 04:00 PST). Quota consumed via `POST /auth/usage/consume`.
 
-**Persist-to-graph behavior:** All processing endpoints persist files + embed vectors to Qdrant **only when a valid JWT is present**. No JWT = anonymous use (no storage). This applies equally to free, standard, and premium users who are authenticated.
+**Persist-to-graph behavior:** All processing endpoints persist files + embed vectors to Qdrant only when a valid JWT is present **and** `subscription_type != "free"`. Free-tier authenticated users still receive the processed output but nothing is staged or embedded. No JWT = anonymous use (no storage).
 
 ---
 

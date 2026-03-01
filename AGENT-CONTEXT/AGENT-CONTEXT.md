@@ -9,6 +9,8 @@
 | Context Area | File | Description |
 |--------------|------|-------------|
 | **Backend System** | [`BackendFiles.md`](BackendFiles.md) | Full reference for embedding pipeline, file storage (R2/MinIO), Qdrant vector DB, auth service, streaming, and all API endpoints. |
+| **Backend Execution** | [`BackendExecution.md`](BackendExecution.md) | Async/threading failure patterns: UploadFile iteration, background task pitfalls, sync-vs-async compatibility. |
+| **Infrastructure / Env** | [`InfrastructureEnv.md`](InfrastructureEnv.md) | Docker build/deploy mismatches, env var loading, stale container images, service networking. |
 
 ---
 
@@ -111,6 +113,7 @@
 | Qdrant upsert/search failure | `api/main.py` (L152–184) |
 | Auth / JWT validation error | `auth/main.py`, `api/main.py` (L191–229) |
 | Stripe webhook mismatch | `auth/main.py` (L302–360) |
+| Webhook returns 200 but no log output / no DB change | [`InfrastructureEnv.md`](InfrastructureEnv.md) — stale Docker image |
 | Subscription gate not working | `auth/main.py` (L183–199), `api/main.py` (L1350–1371) |
 | Free-tier quota not enforcing | `auth/main.py` (L202–240) |
 | Audio processing error (ffmpeg) | `api/main.py` (endpoint-specific), `src/separate.py` |
@@ -120,6 +123,7 @@
 | DB schema mismatch | `database/init.sql` |
 | Graph viz broken (3D) | `api/main.py` (L1453–1562), `MyFilesTab.jsx` |
 | Streaming playback failure | `api/main.py` (L1272–1343) |
+| `UploadFile` async iteration 500 in tests | [`BackendExecution.md`](BackendExecution.md) |
 
 ---
 

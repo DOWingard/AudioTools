@@ -26,7 +26,8 @@ DB_DSN     = (
     f"postgresql://{os.environ['POSTGRES_USER']}:{os.environ['POSTGRES_PASSWORD']}"
     f"@localhost:5434/{os.environ['POSTGRES_DB']}"
 )
-WEBOOK_SECRET = os.environ["CLERK_WEBHOOK_SECRET"]  # whsec_...
+WEBOOK_SECRET        = os.environ["CLERK_WEBHOOK_SECRET"]  # whsec_...
+STRIPE_WEBHOOK_SECRET = os.environ.get("STRIPE_WEBHOOK_SECRET", "")
 
 # ── svix signing helpers ──────────────────────────────────────────────────────
 
@@ -54,6 +55,24 @@ def clerk_webhook(event_type: str, data: dict) -> requests.Response:
     return requests.post(f"{AUTH_URL}/auth/webhooks/clerk", data=payload, headers=headers)
 
 
+# ── stripe signing helpers ────────────────────────────────────────────────────
+
+def stripe_webhook_call(event_type: str, obj: dict) -> requests.Response:
+    payload = json.dumps({"type": event_type, "data": {"object": obj}}).encode()
+    ts = int(time.time())
+    signed_payload = f"{ts}.".encode() + payload
+    sig = hmac.new(
+        STRIPE_WEBHOOK_SECRET.encode(),
+        signed_payload,
+        hashlib.sha256,
+    ).hexdigest()
+    headers = {
+        "Content-Type": "application/json",
+        "Stripe-Signature": f"t={ts},v1={sig}",
+    }
+    return requests.post(f"{AUTH_URL}/auth/webhooks/stripe", data=payload, headers=headers)
+
+
 # ── helpers ───────────────────────────────────────────────────────────────────
 
 def db_get_user(clerk_id: str):
@@ -73,6 +92,37 @@ def db_delete_user(clerk_id: str):
     conn.autocommit = True
     with conn.cursor() as cur:
         cur.execute("DELETE FROM users WHERE clerk_id = %s", (clerk_id,))
+    conn.close()
+
+
+def db_get_user_by_stripe_id(stripe_id: str):
+    conn = psycopg2.connect(DB_DSN)
+    with conn.cursor() as cur:
+        cur.execute("SELECT * FROM users WHERE stripe_id = %s", (stripe_id,))
+        row = cur.fetchone()
+        if row:
+            cols = [d[0] for d in cur.description]
+            return dict(zip(cols, row))
+    conn.close()
+    return None
+
+
+def db_set_stripe_subscription(clerk_id: str, stripe_id: str,
+                                active: bool, status: str):
+    conn = psycopg2.connect(DB_DSN)
+    conn.autocommit = True
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            UPDATE users
+            SET stripe_id = %s,
+                subscription_active = %s,
+                subscription_status = %s,
+                subscription_type = 'standard'
+            WHERE clerk_id = %s
+            """,
+            (stripe_id, active, status, clerk_id),
+        )
     conn.close()
 
 
@@ -157,6 +207,68 @@ def test_invalid_webhook_signature():
     print("  ✅ Invalid svix signature → 400")
 
 
+def test_stripe_payment_failed():
+    """invoice.payment_failed suspends access (subscription_active=False, status=past_due)."""
+    clerk_id  = f"user_stripe_{uuid.uuid4().hex[:8]}"
+    stripe_id = f"cus_test_{uuid.uuid4().hex[:12]}"
+
+    # Insert a minimal user row via the Clerk webhook then put it into active state
+    r = clerk_webhook("user.created", {
+        "id": clerk_id,
+        "email_addresses": [{"email_address": f"{clerk_id}@example.com"}],
+    })
+    assert r.status_code == 200, f"Setup webhook failed: {r.status_code}"
+    time.sleep(0.3)
+
+    db_set_stripe_subscription(clerk_id, stripe_id, active=True, status="active")
+
+    r = stripe_webhook_call("invoice.payment_failed", {"customer": stripe_id})
+    assert r.status_code == 200, f"invoice.payment_failed webhook returned {r.status_code}: {r.text}"
+    time.sleep(0.3)
+
+    row = db_get_user_by_stripe_id(stripe_id)
+    assert row is not None, "User row not found after invoice.payment_failed"
+    assert row["subscription_active"] is False, \
+        f"Expected subscription_active=False, got {row['subscription_active']}"
+    assert row["subscription_status"] == "past_due", \
+        f"Expected status=past_due, got {row['subscription_status']!r}"
+    print("  ✅ invoice.payment_failed → access suspended (past_due)")
+
+    # Clean up
+    db_delete_user(clerk_id)
+
+
+def test_stripe_payment_succeeded():
+    """invoice.payment_succeeded restores access when user is in past_due state."""
+    clerk_id  = f"user_stripe_{uuid.uuid4().hex[:8]}"
+    stripe_id = f"cus_test_{uuid.uuid4().hex[:12]}"
+
+    r = clerk_webhook("user.created", {
+        "id": clerk_id,
+        "email_addresses": [{"email_address": f"{clerk_id}@example.com"}],
+    })
+    assert r.status_code == 200, f"Setup webhook failed: {r.status_code}"
+    time.sleep(0.3)
+
+    # Put user into past_due state (simulating a prior failed payment)
+    db_set_stripe_subscription(clerk_id, stripe_id, active=False, status="past_due")
+
+    r = stripe_webhook_call("invoice.payment_succeeded", {"customer": stripe_id})
+    assert r.status_code == 200, f"invoice.payment_succeeded webhook returned {r.status_code}: {r.text}"
+    time.sleep(0.3)
+
+    row = db_get_user_by_stripe_id(stripe_id)
+    assert row is not None, "User row not found after invoice.payment_succeeded"
+    assert row["subscription_active"] is True, \
+        f"Expected subscription_active=True, got {row['subscription_active']}"
+    assert row["subscription_status"] == "active", \
+        f"Expected status=active, got {row['subscription_status']!r}"
+    print("  ✅ invoice.payment_succeeded → access restored (active)")
+
+    # Clean up
+    db_delete_user(clerk_id)
+
+
 # ── main ──────────────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
@@ -168,6 +280,8 @@ if __name__ == "__main__":
         clerk_id, email = test_clerk_user_created()
         test_clerk_user_updated(clerk_id)
         test_clerk_user_deleted(clerk_id)
+        test_stripe_payment_failed()
+        test_stripe_payment_succeeded()
         print("\n✅ All tests passed!\n")
     except AssertionError as e:
         print(f"\n❌ FAILED: {e}\n")

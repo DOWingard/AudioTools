@@ -57,11 +57,21 @@ export default function UserMenu() {
 
             <UserButton afterSignOutUrl="/">
                 <UserButton.MenuItems>
-                    {subType === 'free' && (
+                    {subType === 'free' ? (
                         <UserButton.Action
                             label="daily uses"
                             labelIcon={<UsageIcon remaining={remaining} />}
                             onClick={() => remaining === 0 && setSubModalOpen(true)}
+                        />
+                    ) : (
+                        <UserButton.Action
+                            label="Unlimited uses"
+                            labelIcon={
+                                <span style={{ fontSize: '1.5rem', lineHeight: 1, fontWeight: 700, color: '#6b7280', fontFamily: 'monospace' }}>
+                                    ∞
+                                </span>
+                            }
+                            onClick={() => { }}
                         />
                     )}
                 </UserButton.MenuItems>

@@ -4,6 +4,7 @@ asyncpg
 svix
 stripe
 requests
+httpx
 python-dotenv
 python-jose[cryptography]
 apscheduler

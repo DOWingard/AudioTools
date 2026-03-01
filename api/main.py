@@ -20,6 +20,7 @@ Endpoints:
 import asyncio
 import io
 import json
+import logging
 import os
 import shutil
 import subprocess
@@ -34,7 +35,7 @@ from typing import List, Optional
 import numpy as np
 from fastapi import FastAPI, File, Form, Header, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse, StreamingResponse
+from fastapi.responses import JSONResponse, Response, StreamingResponse
 
 # ---------------------------------------------------------------------------
 # Config
@@ -55,25 +56,44 @@ S3_ENDPOINT_URL      = os.environ.get("S3_ENDPOINT_URL", "")
 # S3_PUBLIC_ENDPOINT_URL: base for presigned URLs seen by browsers.
 # Needed only for MinIO where internal host != public host (e.g. minio:9000 vs localhost:9000).
 S3_PUBLIC_ENDPOINT_URL = os.environ.get("S3_PUBLIC_ENDPOINT_URL", "")
+INTERNAL_SECRET        = os.environ.get("INTERNAL_SECRET", "")
+
+# Maximum upload size — enforced by _save_upload() and MaxBodySizeMiddleware
+MAX_UPLOAD_BYTES = 250 * 1024 * 1024  # 250 MB
 
 # Staging dir: files live here between the HTTP handler and the background embed+upload task
 STAGING_DIR = Path(os.environ.get("STAGING_DIR", "/tmp/syntag_staging"))
 STAGING_DIR.mkdir(parents=True, exist_ok=True)
 
-# Dev/test bypass: if set, requests without a Bearer token use this clerk_id directly.
-# Never set in production. Gated by env var so it's inert unless explicitly enabled.
-DEV_USER_ID = os.environ.get("DEV_USER_ID", "").strip()
-
 # Thread pool for CPU-heavy background embedding (separate from FastAPI async workers)
 _embed_pool = ThreadPoolExecutor(max_workers=2, thread_name_prefix="embed")
+
+ALLOWED_ORIGINS = [
+    o.strip()
+    for o in os.environ.get("ALLOWED_ORIGINS", "http://localhost:7860").split(",")
+    if o.strip()
+]
+
+log = logging.getLogger(__name__)
 
 app = FastAPI(title="SyncTag Compute API")
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_origins=ALLOWED_ORIGINS,
+    allow_methods=["GET", "POST", "DELETE"],
+    allow_headers=["Authorization", "Content-Type"],
 )
+
+from starlette.middleware.base import BaseHTTPMiddleware  # noqa: E402
+
+class MaxBodySizeMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request, call_next):
+        cl = request.headers.get("content-length")
+        if cl and int(cl) > MAX_UPLOAD_BYTES:
+            return Response("Payload too large", status_code=413)
+        return await call_next(request)
+
+app.add_middleware(MaxBodySizeMiddleware)
 
 # ---------------------------------------------------------------------------
 # Lazy-init singletons — ML models and S3 clients load once on first request
@@ -365,6 +385,23 @@ def _stem_subgroup(stem_key: str) -> str:
     return "main"
 
 
+async def _save_upload(upload: UploadFile, dest: Path) -> None:
+    """Stream an UploadFile to disk, raising HTTP 413 if it exceeds MAX_UPLOAD_BYTES."""
+    total = 0
+    with dest.open("wb") as fh:
+        while True:
+            chunk = await upload.read(65536)
+            if not chunk:
+                break
+            total += len(chunk)
+            if total > MAX_UPLOAD_BYTES:
+                raise HTTPException(
+                    status_code=413,
+                    detail=f"File exceeds {MAX_UPLOAD_BYTES // 1024 // 1024} MB limit",
+                )
+            fh.write(chunk)
+
+
 # ---------------------------------------------------------------------------
 # Health
 # ---------------------------------------------------------------------------
@@ -421,13 +458,12 @@ async def tag_audio(
             "audio/ogg": ".ogg",
         }
         if audio.filename:
-            safe_name = audio.filename
+            safe_name = Path(audio.filename).name or "input.wav"
         else:
             ext = _MIME_EXT.get((audio.content_type or "").lower(), ".wav")
             safe_name = f"input{ext}"
         input_path = tmp_dir / safe_name
-        content = await audio.read()
-        input_path.write_bytes(content)
+        await _save_upload(audio, input_path)
 
         # Run pipeline
         tagger = _get_tagger()
@@ -462,7 +498,7 @@ async def tag_audio(
         try:
             write_tags_ffmpeg(input_path, tagged_path, result)
         except Exception as exc:
-            print(f"[api/tag] ffmpeg tag warning: {exc} — falling back to original")
+            log.warning("[api/tag] ffmpeg tag warning: %s — falling back to original", exc)
             shutil.copy2(str(input_path), str(tagged_path))
 
         # Write CSV sidecar
@@ -473,13 +509,15 @@ async def tag_audio(
         meta_path = tmp_dir / "metadata.json"
         meta_path.write_text(json.dumps(result, indent=2, default=str))
 
-        # Persist tagged audio + schedule embedding if authenticated
+        # Persist tagged audio + schedule embedding if authenticated and subscribed
         if user_id:
-            job_id = str(_uuid.uuid4())
-            dest = _stage_file(user_id, "tag", job_id, tagged_path.name, tagged_path)
-            asyncio.create_task(
-                _schedule_embed(dest, user_id, "tag", "tagged", tagged_path.name, job_id)
-            )
+            sub_type = await _get_subscription_type(token)
+            if sub_type and sub_type != "free":
+                job_id = str(_uuid.uuid4())
+                dest = _stage_file(user_id, "tag", job_id, tagged_path.name, tagged_path)
+                asyncio.create_task(
+                    _schedule_embed(dest, user_id, "tag", "tagged", tagged_path.name, job_id)
+                )
 
         # Pack into ZIP
         buf = io.BytesIO()
@@ -497,7 +535,8 @@ async def tag_audio(
         )
 
     except Exception as exc:
-        raise HTTPException(status_code=500, detail=str(exc)) from exc
+        log.exception("Unhandled error in /api/tag")
+        raise HTTPException(status_code=500, detail="Internal server error") from exc
     finally:
         shutil.rmtree(tmp_dir, ignore_errors=True)
 
@@ -529,9 +568,9 @@ async def separate_audio(
             user_id = await _resolve_user_id(token)
 
         # Save upload
-        input_path = tmp_dir / (audio.filename or "input.wav")
-        content = await audio.read()
-        input_path.write_bytes(content)
+        _safe_name = Path(audio.filename or "input.wav").name or "input.wav"
+        input_path = tmp_dir / _safe_name
+        await _save_upload(audio, input_path)
 
         output_dir = tmp_dir / "stems" / input_path.stem
         device = "cuda" if torch.cuda.is_available() else "cpu"
@@ -539,20 +578,22 @@ async def separate_audio(
         from src.advanced_separate import run_pipeline
         all_files = run_pipeline(input_path, output_dir, device=device)
 
-        # Persist + schedule embedding if authenticated
+        # Persist + schedule embedding if authenticated and subscribed
         if user_id:
-            job_id = str(_uuid.uuid4())
-            for stem_key, filepath in all_files.items():
-                p = Path(filepath)
-                if p.exists():
-                    subgroup = _stem_subgroup(stem_key)
-                    dest = _stage_file(user_id, "separate", job_id, f"{stem_key}.wav", p)
-                    asyncio.create_task(
-                        _schedule_embed(
-                            dest, user_id, "separate", subgroup,
-                            audio.filename or "input.wav", job_id,
+            sub_type = await _get_subscription_type(token)
+            if sub_type and sub_type != "free":
+                job_id = str(_uuid.uuid4())
+                for stem_key, filepath in all_files.items():
+                    p = Path(filepath)
+                    if p.exists():
+                        subgroup = _stem_subgroup(stem_key)
+                        dest = _stage_file(user_id, "separate", job_id, f"{stem_key}.wav", p)
+                        asyncio.create_task(
+                            _schedule_embed(
+                                dest, user_id, "separate", subgroup,
+                                Path(audio.filename or "input.wav").name or "input.wav", job_id,
+                            )
                         )
-                    )
 
         # Pack all existing stem files into ZIP
         buf = io.BytesIO()
@@ -571,7 +612,8 @@ async def separate_audio(
         )
 
     except Exception as exc:
-        raise HTTPException(status_code=500, detail=str(exc)) from exc
+        log.exception("Unhandled error in /api/separate")
+        raise HTTPException(status_code=500, detail="Internal server error") from exc
     finally:
         shutil.rmtree(tmp_dir, ignore_errors=True)
 
@@ -595,9 +637,9 @@ async def cut_audio(
             token = authorization.removeprefix("Bearer ").strip()
             user_id = await _resolve_user_id(token)
 
-        input_path = tmp_dir / (audio.filename or "input.wav")
-        content = await audio.read()
-        input_path.write_bytes(content)
+        _safe_name = Path(audio.filename or "input.wav").name or "input.wav"
+        input_path = tmp_dir / _safe_name
+        await _save_upload(audio, input_path)
 
         output_path = tmp_dir / f"{input_path.stem}_trimmed.wav"
 
@@ -611,13 +653,15 @@ async def cut_audio(
 
         subprocess.run(cmd, capture_output=True, check=True)
 
-        # Persist + schedule embedding if authenticated
+        # Persist + schedule embedding if authenticated and subscribed
         if user_id:
-            job_id = str(_uuid.uuid4())
-            dest = _stage_file(user_id, "cut", job_id, output_path.name, output_path)
-            asyncio.create_task(
-                _schedule_embed(dest, user_id, "cut", "trimmed", audio.filename or "input.wav", job_id)
-            )
+            sub_type = await _get_subscription_type(token)
+            if sub_type and sub_type != "free":
+                job_id = str(_uuid.uuid4())
+                dest = _stage_file(user_id, "cut", job_id, output_path.name, output_path)
+                asyncio.create_task(
+                    _schedule_embed(dest, user_id, "cut", "trimmed", Path(audio.filename or "input.wav").name or "input.wav", job_id)
+                )
 
         buf = io.BytesIO(output_path.read_bytes())
         return StreamingResponse(
@@ -628,7 +672,8 @@ async def cut_audio(
     except subprocess.CalledProcessError as exc:
         raise HTTPException(status_code=500, detail=f"ffmpeg error: {exc.stderr.decode()}") from exc
     except Exception as exc:
-        raise HTTPException(status_code=500, detail=str(exc)) from exc
+        log.exception("Unhandled error in /api/cut")
+        raise HTTPException(status_code=500, detail="Internal server error") from exc
     finally:
         shutil.rmtree(tmp_dir, ignore_errors=True)
 
@@ -657,8 +702,7 @@ async def join_audio(
         for i, f in enumerate(audio):
             ext = Path(f.filename or "input.wav").suffix or ".wav"
             fpath = tmp_dir / f"input_{i:03d}{ext}"
-            content = await f.read()
-            fpath.write_bytes(content)
+            await _save_upload(f, fpath)
             input_paths.append(fpath)
 
         # Convert each to WAV PCM first for consistent concat
@@ -686,14 +730,16 @@ async def join_audio(
             capture_output=True, check=True,
         )
 
-        # Persist + schedule embedding if authenticated
+        # Persist + schedule embedding if authenticated and subscribed
         if user_id:
-            job_id = str(_uuid.uuid4())
-            dest = _stage_file(user_id, "join", job_id, "joined.wav", output_path)
-            original = ", ".join(f.filename or "input" for f in audio[:3])
-            asyncio.create_task(
-                _schedule_embed(dest, user_id, "join", "joined", original, job_id)
-            )
+            sub_type = await _get_subscription_type(token)
+            if sub_type and sub_type != "free":
+                job_id = str(_uuid.uuid4())
+                dest = _stage_file(user_id, "join", job_id, "joined.wav", output_path)
+                original = ", ".join(f.filename or "input" for f in audio[:3])
+                asyncio.create_task(
+                    _schedule_embed(dest, user_id, "join", "joined", original, job_id)
+                )
 
         buf = io.BytesIO(output_path.read_bytes())
         return StreamingResponse(
@@ -704,7 +750,8 @@ async def join_audio(
     except subprocess.CalledProcessError as exc:
         raise HTTPException(status_code=500, detail=f"ffmpeg error: {exc.stderr.decode()}") from exc
     except Exception as exc:
-        raise HTTPException(status_code=500, detail=str(exc)) from exc
+        log.exception("Unhandled error in /api/join")
+        raise HTTPException(status_code=500, detail="Internal server error") from exc
     finally:
         shutil.rmtree(tmp_dir, ignore_errors=True)
 
@@ -728,13 +775,9 @@ async def karaoke_audio(
         if authorization:
             token = authorization.removeprefix("Bearer ").strip()
             user_id = await _resolve_user_id(token)
-        if not user_id and DEV_USER_ID:
-            print(f"[dev] No auth token — using DEV_USER_ID={DEV_USER_ID!r}")
-            user_id = DEV_USER_ID
-
-        input_path = tmp_dir / (audio.filename or "input.wav")
-        content = await audio.read()
-        input_path.write_bytes(content)
+        _safe_name = Path(audio.filename or "input.wav").name or "input.wav"
+        input_path = tmp_dir / _safe_name
+        await _save_upload(audio, input_path)
 
         device = "cuda" if torch.cuda.is_available() else "cpu"
 
@@ -758,13 +801,15 @@ async def karaoke_audio(
         output_path = tmp_dir / f"{input_path.stem}_karaoke.wav"
         torchaudio.save(str(output_path), instrumental, sr)
 
-        # Persist + schedule embedding if authenticated
+        # Persist + schedule embedding if authenticated and subscribed
         if user_id:
-            job_id = str(_uuid.uuid4())
-            dest = _stage_file(user_id, "karaoke", job_id, output_path.name, output_path)
-            asyncio.create_task(
-                _schedule_embed(dest, user_id, "karaoke", "instrumental", audio.filename or "input.wav", job_id)
-            )
+            sub_type = await _get_subscription_type(token)
+            if sub_type and sub_type != "free":
+                job_id = str(_uuid.uuid4())
+                dest = _stage_file(user_id, "karaoke", job_id, output_path.name, output_path)
+                asyncio.create_task(
+                    _schedule_embed(dest, user_id, "karaoke", "instrumental", Path(audio.filename or "input.wav").name or "input.wav", job_id)
+                )
 
         buf = io.BytesIO(output_path.read_bytes())
         return StreamingResponse(
@@ -773,7 +818,8 @@ async def karaoke_audio(
             headers={"Content-Disposition": f'attachment; filename="{output_path.name}"'},
         )
     except Exception as exc:
-        raise HTTPException(status_code=500, detail=str(exc)) from exc
+        log.exception("Unhandled error in /api/karaoke")
+        raise HTTPException(status_code=500, detail="Internal server error") from exc
     finally:
         shutil.rmtree(tmp_dir, ignore_errors=True)
 
@@ -811,9 +857,9 @@ async def convert_audio(
             token = authorization.removeprefix("Bearer ").strip()
             user_id = await _resolve_user_id(token)
 
-        input_path = tmp_dir / (audio.filename or "input.wav")
-        content = await audio.read()
-        input_path.write_bytes(content)
+        _safe_name = Path(audio.filename or "input.wav").name or "input.wav"
+        input_path = tmp_dir / _safe_name
+        await _save_upload(audio, input_path)
 
         # M4A needs an mp4 container — use a distinct output name
         out_stem = input_path.stem
@@ -826,13 +872,15 @@ async def convert_audio(
 
         subprocess.run(cmd, capture_output=True, check=True)
 
-        # Persist + schedule embedding if authenticated
+        # Persist + schedule embedding if authenticated and subscribed
         if user_id:
-            job_id = str(_uuid.uuid4())
-            dest = _stage_file(user_id, "convert", job_id, output_path.name, output_path)
-            asyncio.create_task(
-                _schedule_embed(dest, user_id, "convert", "converted", audio.filename or "input.wav", job_id)
-            )
+            sub_type = await _get_subscription_type(token)
+            if sub_type and sub_type != "free":
+                job_id = str(_uuid.uuid4())
+                dest = _stage_file(user_id, "convert", job_id, output_path.name, output_path)
+                asyncio.create_task(
+                    _schedule_embed(dest, user_id, "convert", "converted", Path(audio.filename or "input.wav").name or "input.wav", job_id)
+                )
 
         buf = io.BytesIO(output_path.read_bytes())
         return StreamingResponse(
@@ -843,7 +891,8 @@ async def convert_audio(
     except subprocess.CalledProcessError as exc:
         raise HTTPException(status_code=500, detail=f"ffmpeg error: {exc.stderr.decode()}") from exc
     except Exception as exc:
-        raise HTTPException(status_code=500, detail=str(exc)) from exc
+        log.exception("Unhandled error in /api/convert")
+        raise HTTPException(status_code=500, detail="Internal server error") from exc
     finally:
         shutil.rmtree(tmp_dir, ignore_errors=True)
 
@@ -1074,15 +1123,16 @@ async def bpm_key(
     """Detect BPM and musical key of an audio file."""
     tmp_dir = Path(tempfile.mkdtemp(prefix="api_bpm_"))
     try:
-        input_path = tmp_dir / (audio.filename or "input.wav")
-        content = await audio.read()
-        input_path.write_bytes(content)
+        _safe_name = Path(audio.filename or "input.wav").name or "input.wav"
+        input_path = tmp_dir / _safe_name
+        await _save_upload(audio, input_path)
 
         result = _detect_bpm_key(str(input_path))
         return JSONResponse(result)
 
     except Exception as exc:
-        raise HTTPException(status_code=500, detail=str(exc)) from exc
+        log.exception("Unhandled error in /api/bpm-key")
+        raise HTTPException(status_code=500, detail="Internal server error") from exc
     finally:
         shutil.rmtree(tmp_dir, ignore_errors=True)
 
@@ -1182,34 +1232,37 @@ async def analyze_audio(
             token = authorization.removeprefix("Bearer ").strip()
             user_id = await _resolve_user_id(token)
 
-        input_path = tmp_dir / (audio.filename or "input.wav")
-        content = await audio.read()
-        input_path.write_bytes(content)
+        _safe_name = Path(audio.filename or "input.wav").name or "input.wav"
+        input_path = tmp_dir / _safe_name
+        await _save_upload(audio, input_path)
 
         result = _analyze_audio(str(input_path))
 
-        # Persist original + schedule embedding if authenticated
+        # Persist original + schedule embedding if authenticated and subscribed
         if user_id:
-            job_id = str(_uuid.uuid4())
-            dest = _stage_file(user_id, "analyze", job_id, input_path.name, input_path)
-            extra = {
-                k: result[k] for k in (
-                    "bpm", "key", "key_confidence", "key_source", "tempo_category",
-                    "energy_rating", "lufs", "rms_db", "peak_db", "brightness_hz",
-                    "sample_rate", "channels", "codec",
-                ) if k in result
-            }
-            asyncio.create_task(
-                _schedule_embed(
-                    dest, user_id, "analyze", "analyzed",
-                    audio.filename or "input.wav", job_id, extra,
+            sub_type = await _get_subscription_type(token)
+            if sub_type and sub_type != "free":
+                job_id = str(_uuid.uuid4())
+                dest = _stage_file(user_id, "analyze", job_id, input_path.name, input_path)
+                extra = {
+                    k: result[k] for k in (
+                        "bpm", "key", "key_confidence", "key_source", "tempo_category",
+                        "energy_rating", "lufs", "rms_db", "peak_db", "brightness_hz",
+                        "sample_rate", "channels", "codec",
+                    ) if k in result
+                }
+                asyncio.create_task(
+                    _schedule_embed(
+                        dest, user_id, "analyze", "analyzed",
+                        Path(audio.filename or "input.wav").name or "input.wav", job_id, extra,
+                    )
                 )
-            )
 
         return JSONResponse(result)
 
     except Exception as exc:
-        raise HTTPException(status_code=500, detail=str(exc)) from exc
+        log.exception("Unhandled error in /api/analyze")
+        raise HTTPException(status_code=500, detail="Internal server error") from exc
     finally:
         shutil.rmtree(tmp_dir, ignore_errors=True)
 
@@ -1254,7 +1307,8 @@ async def list_files(authorization: str = Header(default=None)):
         return JSONResponse({"files": files})
 
     except Exception as exc:
-        raise HTTPException(status_code=500, detail=str(exc)) from exc
+        log.exception("Unhandled error in /api/files")
+        raise HTTPException(status_code=500, detail="Internal server error") from exc
 
 
 # ---------------------------------------------------------------------------
@@ -1288,8 +1342,7 @@ async def upload_files_to_graph(
         try:
             fname = upload.filename or f"upload_{queued}.wav"
             input_path = tmp_dir / fname
-            content = await upload.read()
-            input_path.write_bytes(content)
+            await _save_upload(upload, input_path)
 
             dest = _stage_file(user_id, "upload", job_id, fname, input_path)
             await _schedule_embed(
@@ -1297,7 +1350,7 @@ async def upload_files_to_graph(
             )
             queued += 1
         except Exception as exc:
-            print(f"[upload] Failed to queue {upload.filename}: {exc}")
+            log.warning("[upload] Failed to queue %s: %s", upload.filename, exc)
         finally:
             shutil.rmtree(tmp_dir, ignore_errors=True)
 
@@ -1318,8 +1371,6 @@ async def get_file_audio(point_id: str, authorization: str = Header(default=None
     if authorization:
         token = authorization.removeprefix("Bearer ").strip()
         user_id = await _resolve_user_id(token)
-    if not user_id and DEV_USER_ID:
-        user_id = DEV_USER_ID
     if not user_id:
         raise HTTPException(status_code=401, detail="Authorization required")
 
@@ -1331,7 +1382,8 @@ async def get_file_audio(point_id: str, authorization: str = Header(default=None
             with_payload=True,
         )
     except Exception as exc:
-        raise HTTPException(status_code=500, detail=f"Qdrant error: {exc}") from exc
+        log.exception("Unhandled error in /api/files/%s/audio", point_id)
+        raise HTTPException(status_code=500, detail="Internal server error") from exc
 
     if not records:
         raise HTTPException(status_code=404, detail="File not found")
@@ -1365,7 +1417,8 @@ async def get_file_audio(point_id: str, authorization: str = Header(default=None
             lambda: s3.get_object(Bucket=R2_BUCKET_NAME, Key=r2_key),
         )
     except Exception as exc:
-        raise HTTPException(status_code=500, detail=f"Failed to fetch audio from storage: {exc}") from exc
+        log.error("S3 fetch failed for key %s: %s", r2_key, exc)
+        raise HTTPException(status_code=500, detail="Failed to fetch audio file") from exc
 
     body = obj["Body"]
     content_length = obj.get("ContentLength")
@@ -1394,8 +1447,8 @@ async def get_file_audio(point_id: str, authorization: str = Header(default=None
 # POST /api/files/search — Similarity search in user's personal graph
 # ---------------------------------------------------------------------------
 
-async def _require_premium_profile(authorization: str) -> dict:
-    """Validate token, fetch profile, assert subscription_active. Returns profile dict."""
+async def _require_premium_profile(authorization: str, required_type: str = "premium") -> dict:
+    """Validate token, fetch profile, assert subscription tier. Returns profile dict."""
     import httpx
     try:
         async with httpx.AsyncClient() as client:
@@ -1414,7 +1467,16 @@ async def _require_premium_profile(authorization: str) -> dict:
     if not profile.get("clerk_id"):
         raise HTTPException(status_code=401, detail="Cannot determine user identity")
     if not profile.get("subscription_active"):
-        raise HTTPException(status_code=403, detail="Premium subscription required")
+        raise HTTPException(status_code=403, detail="Active subscription required")
+
+    TYPE_RANK = {"free": 0, "standard": 1, "premium": 2}
+    user_rank = TYPE_RANK.get(profile.get("subscription_type", "free"), 0)
+    required_rank = TYPE_RANK.get(required_type, 2)
+    if user_rank < required_rank:
+        raise HTTPException(
+            status_code=403,
+            detail=f"{required_type.capitalize()} subscription required",
+        )
     return profile
 
 
@@ -1454,9 +1516,9 @@ async def search_files(
 
         if audio is not None:
             tmp_dir = Path(tempfile.mkdtemp(prefix="api_search_"))
-            input_path = tmp_dir / (audio.filename or "query.wav")
-            content = await audio.read()
-            input_path.write_bytes(content)
+            _safe_name = Path(audio.filename or "query.wav").name or "query.wav"
+            input_path = tmp_dir / _safe_name
+            await _save_upload(audio, input_path)
             waveform = embedder.load_audio(str(input_path))
             query_emb = embedder.embed(waveform)
         else:
@@ -1487,7 +1549,8 @@ async def search_files(
     except HTTPException:
         raise
     except Exception as exc:
-        raise HTTPException(status_code=500, detail=str(exc)) from exc
+        log.exception("Unhandled error in /api/files/search")
+        raise HTTPException(status_code=500, detail="Internal server error") from exc
     finally:
         if tmp_dir:
             shutil.rmtree(tmp_dir, ignore_errors=True)
@@ -1606,6 +1669,46 @@ async def get_graph_data(authorization: str = Header(default=None)):
     except HTTPException:
         raise
     except Exception as exc:
-        raise HTTPException(status_code=500, detail=str(exc)) from exc
+        log.exception("Unhandled error in /api/files/graph")
+        raise HTTPException(status_code=500, detail="Internal server error") from exc
 
 
+# ---------------------------------------------------------------------------
+# Internal — user data purge (called by auth service on user.deleted)
+# ---------------------------------------------------------------------------
+
+@app.delete("/internal/users/{clerk_id}")
+async def purge_user_data(clerk_id: str, x_internal_secret: str = Header(...)):
+    """Internal endpoint: purge all Qdrant vectors and S3 objects for a deleted user."""
+    if not INTERNAL_SECRET or x_internal_secret != INTERNAL_SECRET:
+        raise HTTPException(status_code=403, detail="Forbidden")
+
+    from qdrant_client.models import FieldCondition, Filter, MatchValue
+
+    try:
+        _get_qdrant().delete(
+            collection_name=COLLECTION_NAME,
+            points_selector=Filter(
+                must=[FieldCondition(key="user_id", match=MatchValue(value=clerk_id))]
+            ),
+        )
+        log.info("Purged Qdrant vectors for user %s", clerk_id)
+    except Exception as exc:
+        log.error("Qdrant purge failed for user %s: %s", clerk_id, exc)
+
+    try:
+        s3 = _get_s3_upload()
+        loop = asyncio.get_running_loop()
+        paginator = await loop.run_in_executor(
+            None, lambda: s3.get_paginator("list_objects_v2")
+        )
+        pages = paginator.paginate(Bucket=R2_BUCKET_NAME, Prefix=f"{clerk_id}/")
+        for page in pages:
+            keys = [{"Key": obj["Key"]} for obj in page.get("Contents", [])]
+            if keys:
+                s3.delete_objects(Bucket=R2_BUCKET_NAME, Delete={"Objects": keys})
+        log.info("Purged S3 objects for user %s under prefix %s/", clerk_id, clerk_id)
+    except Exception as exc:
+        log.error("S3 purge failed for user %s: %s", clerk_id, exc)
+
+    return JSONResponse({"purged": clerk_id})
