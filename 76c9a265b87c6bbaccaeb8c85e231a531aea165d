@@ -1,0 +1,178 @@
+tests/test_e2e_karaoke.py
+  16732513dcc9b275 17,28-29,31-36,184
+  051f73967e77ce0a 1-16,18-27,30,37-183,185-193
+docker-compose.yml
+  cacdbb01ae99bb13 2-6,10-12,15-27,32-33,36-40,104,119-120,151
+  051f73967e77ce0a 7-8,13-14,28-29,31,34-35,103,107-108,110-111
+  16732513dcc9b275 9,30,105-106,109
+ui/src/components/MyFilesTab.jsx
+  051f73967e77ce0a 16,143,148-156,158,190-191,210,214-215,224,367,933,946,969-1023,1095,1228,1231-1233
+ui/src/components/SyncTagTab.jsx
+  16732513dcc9b275 13-15,17-18,42-44,46-47,140-190,196-197,289,291-292
+  051f73967e77ce0a 233
+  49614eec833536cb 79
+  c8145d9fec99fce4 271
+api/main.py
+  051f73967e77ce0a 63-65,731-733,818,1317,1321-1322,1324,1347-1354,1358,1360,1362-1365,1368-1378,1380-1384,1387-1389
+  2213601cfdd03028 786-792,819-820,824
+  16732513dcc9b275 385-389,398-399,436-452
+  4b385665f46558a6 412-428
+  cacdbb01ae99bb13 45-61,79,84-85,104-147,236-242,263,272-276,279-280,284,286,288-289,291-294,296-297,300,304,308,318-326,328,549,617,692,764,832,1194,1294,1343-1345,1361,1367
+  e2ee55ccf007ddc7 454-461,463,465-466,479,481,489
+  fa538e51eb8b62cf 1426
+  49614eec833536cb 1355-1357,1359
+ui/src/components/AudioCutterTab.jsx
+  051f73967e77ce0a 6-8,31,33,48,122-126,129-134,138-139,196,208-209,211,214,333,336-341
+ui/src/components/WaveformPlayer.jsx
+  051f73967e77ce0a 4-8,20,29-45,73,88-91
+ui/src/components/FormatConverterTab.jsx
+  2213601cfdd03028 8-14
+requirements.txt
+  cacdbb01ae99bb13 30
+src/export.py
+  c8145d9fec99fce4 401
+  e2ee55ccf007ddc7 9-16,20,124-224
+  e1264859446f49b1 41-42,90
+  49614eec833536cb 257-260,262,268,270-271,303-353,361,369
+src/synctag.py
+  e1264859446f49b1 12,16,85,112,121,125,132,136,139,153,164,169,249-251,257,297,300,302-303,305-307,309,311-312,314-315,317-319,321-328,330,332,381
+ui/src/components/KaraokeTab.jsx
+  051f73967e77ce0a 127
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.1.4",
+  "base_commit_sha": "76c9a265b87c6bbaccaeb8c85e231a531aea165d",
+  "prompts": {
+    "051f73967e77ce0a": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "aa372eeb-194e-4bdd-960c-6bd1ed373780",
+        "model": "claude-sonnet-4-6"
+      },
+      "human_author": "Derek Wingard <derekwingard@gmail.com>",
+      "messages": [],
+      "total_additions": 458,
+      "total_deletions": 106,
+      "accepted_lines": 387,
+      "overriden_lines": 0
+    },
+    "16732513dcc9b275": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "684aa2bc-a94d-46c3-8725-17ae6e29835d",
+        "model": "claude-sonnet-4-6"
+      },
+      "human_author": "Derek Wingard <derekwingard@gmail.com>",
+      "messages": [],
+      "total_additions": 112,
+      "total_deletions": 35,
+      "accepted_lines": 105,
+      "overriden_lines": 0
+    },
+    "2213601cfdd03028": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f8f2a96b-61e0-465c-b6b6-9f1be58c8789",
+        "model": "claude-sonnet-4-6"
+      },
+      "human_author": "Derek Wingard <derekwingard@gmail.com>",
+      "messages": [],
+      "total_additions": 22,
+      "total_deletions": 10,
+      "accepted_lines": 17,
+      "overriden_lines": 0
+    },
+    "49614eec833536cb": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "332c74ee-cb83-4347-b880-7bff84f46ecc",
+        "model": "claude-sonnet-4-6"
+      },
+      "human_author": "Derek Wingard <derekwingard@gmail.com>",
+      "messages": [],
+      "total_additions": 112,
+      "total_deletions": 56,
+      "accepted_lines": 98,
+      "overriden_lines": 0
+    },
+    "4b385665f46558a6": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "9c5cbb18-a89d-40ba-9f44-a36969a58143",
+        "model": "claude-sonnet-4-6"
+      },
+      "human_author": "Derek Wingard <derekwingard@gmail.com>",
+      "messages": [],
+      "total_additions": 18,
+      "total_deletions": 3,
+      "accepted_lines": 17,
+      "overriden_lines": 0
+    },
+    "c8145d9fec99fce4": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "b36f594c-d38a-461d-bd76-d588e3a536fd",
+        "model": "claude-sonnet-4-6"
+      },
+      "human_author": "Derek Wingard <derekwingard@gmail.com>",
+      "messages": [],
+      "total_additions": 4,
+      "total_deletions": 15,
+      "accepted_lines": 2,
+      "overriden_lines": 0
+    },
+    "cacdbb01ae99bb13": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "1a082370-01a6-450b-ba6f-2324ef1514bd",
+        "model": "claude-sonnet-4-6"
+      },
+      "human_author": "Derek Wingard <derekwingard@gmail.com>",
+      "messages": [],
+      "total_additions": 186,
+      "total_deletions": 68,
+      "accepted_lines": 147,
+      "overriden_lines": 0
+    },
+    "e1264859446f49b1": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "a3d7848b-d238-4d0d-ab3b-4466df1d8dc4",
+        "model": "claude-sonnet-4-6"
+      },
+      "human_author": "Derek Wingard <derekwingard@gmail.com>",
+      "messages": [],
+      "total_additions": 61,
+      "total_deletions": 128,
+      "accepted_lines": 47,
+      "overriden_lines": 0
+    },
+    "e2ee55ccf007ddc7": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "4683c69e-9b0d-4327-b002-668e649bdce7",
+        "model": "claude-sonnet-4-6"
+      },
+      "human_author": "Derek Wingard <derekwingard@gmail.com>",
+      "messages": [],
+      "total_additions": 124,
+      "total_deletions": 17,
+      "accepted_lines": 124,
+      "overriden_lines": 0
+    },
+    "fa538e51eb8b62cf": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "d005f754-db3f-419f-9882-8562eb8a814c",
+        "model": "claude-sonnet-4-6"
+      },
+      "human_author": "Derek Wingard <derekwingard@gmail.com>",
+      "messages": [],
+      "total_additions": 11,
+      "total_deletions": 10,
+      "accepted_lines": 1,
+      "overriden_lines": 0
+    }
+  }
+}
