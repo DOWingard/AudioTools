@@ -3,6 +3,9 @@ import WaveSurfer from 'wavesurfer.js';
 import RegionsPlugin from 'wavesurfer.js/dist/plugins/regions.esm.js';
 import { useAuth } from '@clerk/clerk-react';
 import { useGatedRun } from '../AuthContext.jsx';
+import WaveformPlayer from './WaveformPlayer.jsx';
+
+let _cutterInstanceId = 0;
 
 const API_BASE = '/api';
 
@@ -25,8 +28,9 @@ export default function AudioCutterTab() {
     const [playing, setPlaying] = useState(false);
     const [currentTime, setCurrentTime] = useState(0);
     const [loading, setLoading] = useState(false);
-    const [resultUrl, setResultUrl] = useState(null);
+    const [resultBlob, setResultBlob] = useState(null);
     const [resultName, setResultName] = useState('');
+    const cutterIdRef = useRef(++_cutterInstanceId);
     const [error, setError] = useState('');
     const fileRef = useRef(null);
     const [dragover, setDragover] = useState(false);
@@ -41,7 +45,7 @@ export default function AudioCutterTab() {
     const handleFile = useCallback((f) => {
         setFile(f);
         setAudioBlob(f);
-        setResultUrl(null);
+        setResultBlob(null);
         setError('');
         setStart('');
         setEnd('');
@@ -115,12 +119,24 @@ export default function AudioCutterTab() {
         ws.on('audioprocess', () => setCurrentTime(ws.getCurrentTime()));
         ws.on('seeking', () => setCurrentTime(ws.getCurrentTime()));
         ws.on('finish', () => setPlaying(false));
-        ws.on('play', () => setPlaying(true));
+        ws.on('play', () => {
+            setPlaying(true);
+            // Broadcast so all other players (WaveformPlayer, etc.) pause.
+            window.dispatchEvent(new CustomEvent('waveform:play-started', { detail: cutterIdRef.current }));
+        });
         ws.on('pause', () => setPlaying(false));
+
+        // Stop this WaveSurfer when any other player starts or stop-all fires.
+        const stopHandler = () => { if (ws.isPlaying()) ws.pause(); };
+        const playHandler = (e) => { if (e.detail !== cutterIdRef.current && ws.isPlaying()) ws.pause(); };
+        window.addEventListener('waveform:play-started', playHandler);
+        window.addEventListener('waveform:stop-all', stopHandler);
 
         wsRef.current = ws;
 
         return () => {
+            window.removeEventListener('waveform:play-started', playHandler);
+            window.removeEventListener('waveform:stop-all', stopHandler);
             ws.destroy();
             wsRef.current = null;
             regionsRef.current = null;
@@ -177,7 +193,7 @@ export default function AudioCutterTab() {
 
             const blob = await resp.blob();
             const name = `${file.name.replace(/\.\w+$/, '')}_trimmed.wav`;
-            setResultUrl(URL.createObjectURL(blob));
+            setResultBlob(blob);
             setResultName(name);
             localStorage.setItem('lastProcessedAt', String(Date.now()));
             window.dispatchEvent(new CustomEvent('audioProcessed'));
@@ -189,11 +205,13 @@ export default function AudioCutterTab() {
     };
 
     const download = () => {
-        if (!resultUrl) return;
+        if (!resultBlob) return;
+        const url = URL.createObjectURL(resultBlob);
         const a = document.createElement('a');
-        a.href = resultUrl;
+        a.href = url;
         a.download = resultName;
         a.click();
+        URL.revokeObjectURL(url);
     };
 
     const selectionDuration = (() => {
@@ -312,10 +330,16 @@ export default function AudioCutterTab() {
 
                 {error && <p className="status-error" style={{ marginTop: '1rem' }}>❌ {error}</p>}
 
-                {resultUrl && (
+                {resultBlob && (
                     <div className="fade-in" style={{ marginTop: '1.5rem' }}>
                         <p className="status-success">✅ Audio trimmed successfully!</p>
-                        <audio controls src={resultUrl} style={{ width: '100%', marginTop: '0.5rem' }} />
+                        <WaveformPlayer
+                            label="✂️ Trimmed Audio"
+                            audioBlob={resultBlob}
+                            fileName={resultName}
+                            color="#e63946"
+                            autoPlay={true}
+                        />
                         <button className="btn btn-secondary" style={{ marginTop: '1rem', width: '100%' }} onClick={download}>
                             ⬇ Download Trimmed Audio
                         </button>

@@ -27,3 +27,4 @@ julius>=0.2.3
 lameenc>=1.2
 openunmix
 pyyaml
+boto3>=1.34.0

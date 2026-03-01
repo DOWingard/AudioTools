@@ -7,14 +7,13 @@ Stages:
   2. Stem Separation            — Demucs: vocals / drums / bass / other
   3. Embedding Extraction       — M2D-CLAP audio embeddings for mix + stems
   4. Zero-Shot Classification   — cosine similarity vs taxonomy text prompts
-  5. Semantic Synthesis (LLM)   — Gemini writes pitch + formats DISCO metadata
 
 Output: structured dict (also serialisable to JSON) containing:
-  - audio_info  : duration, sample rate
+  - audio_info  : duration, sample rate, mix RMS
   - stem_info   : per-stem RMS energy + presence flag
   - tags        : top genre / mood / instruments / tempo (constrained vocabulary)
   - scores      : full ranked list per category
-  - llm         : pitch sentence + DISCO-ready metadata JSON
+  - metadata    : DISCO-ready metadata dict (Title/Artist/Album injected by caller)
 """
 
 import json
@@ -36,8 +35,6 @@ from src.taxonomy import GENRES, INSTRUMENTS, MOODS, TEMPOS, TRACK_TYPES
 # ---------------------------------------------------------------------------
 # Config
 # ---------------------------------------------------------------------------
-GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "")
-GEMINI_MODEL = os.environ.get("GEMINI_MODEL", "gemini-2.0-flash")
 
 # RMS threshold: stems below this are considered absent (silence/bleed only)
 _STEM_PRESENCE_THRESHOLD = 0.005
@@ -85,24 +82,20 @@ def _get_duration_ffprobe(path: str) -> float:
 
 class SyncTagger:
     """
-    Orchestrates the 5-stage SyncTag AI pipeline.
+    Orchestrates the 4-stage SyncTag AI pipeline.
 
     Parameters
     ----------
     weight_file : str, optional
         Path to the M2D-CLAP checkpoint. Defaults to the project default.
-    gemini_api_key : str, optional
-        Gemini API key. Falls back to GEMINI_API_KEY env var.
     """
 
     def __init__(
         self,
         weight_file: Optional[str] = None,
-        gemini_api_key: Optional[str] = None,
     ):
         kwargs = {"weight_file": weight_file} if weight_file else {}
         self.embedder = AudioEmbedder(**kwargs)
-        self._api_key = gemini_api_key or GEMINI_API_KEY
         # Cache text embeddings — encoding is the most expensive per-label op
         self._text_cache: dict[str, np.ndarray] = {}
 
@@ -116,7 +109,7 @@ class SyncTagger:
 
         Returns
         -------
-        dict with keys: file, title, audio_info, stem_info, tags, scores, llm
+        dict with keys: file, title, audio_info, stem_info, tags, scores, metadata
         """
         audio_path = Path(audio_path).resolve()
         if not audio_path.exists():
@@ -125,27 +118,25 @@ class SyncTagger:
         print(f"\n[SyncTag] ▶ {audio_path.name}")
 
         # Stage 1
-        print("[Stage 1/5] Preprocessing…")
+        print("[Stage 1/4] Preprocessing…")
         audio, audio_info = self._preprocess(audio_path)
 
         # Stage 2
-        print("[Stage 2/5] Separating stems (Demucs)…")
+        print("[Stage 2/4] Separating stems (Demucs)…")
         tmp_dir = Path(tempfile.mkdtemp(prefix="synctag_"))
         stems = self._separate(audio_path, tmp_dir)
         stem_audio = {name: self.embedder.load_audio(str(p)) for name, p in stems.items()}
         stem_info = self._analyze_stems(stem_audio)
 
         # Stage 3
-        print("[Stage 3/5] Extracting M2D-CLAP embeddings…")
+        print("[Stage 3/4] Extracting M2D-CLAP embeddings…")
         embeddings = self._extract_embeddings(audio, stem_audio)
 
         # Stage 4
-        print("[Stage 4/5] Zero-shot classification…")
+        print("[Stage 4/4] Zero-shot classification…")
         classification = self._classify(embeddings, stem_info)
 
-        # Stage 5
-        print("[Stage 5/5] Synthesizing metadata with Gemini…")
-        llm_result = self._synthesize(classification, stem_info, audio_info)
+        metadata = self._build_metadata(classification, stem_info, audio_info)
 
         return {
             "file": str(audio_path),
@@ -159,7 +150,7 @@ class SyncTagger:
                 "tempo": classification["tempo"][0]["tag"],
             },
             "scores": classification,
-            "llm": llm_result,
+            "metadata": metadata,
         }
 
     # ------------------------------------------------------------------ #
@@ -170,10 +161,12 @@ class SyncTagger:
         """Load audio via ffmpeg → 16 kHz mono float32. Return (waveform, info)."""
         audio = self.embedder.load_audio(str(audio_path))
         duration = _get_duration_ffprobe(str(audio_path)) or len(audio) / 16_000
+        rms_mix = float(np.sqrt(np.mean(audio ** 2)))
         info = {
             "duration": round(duration, 2),
             "sample_rate": 16_000,
             "num_samples": len(audio),
+            "rms_mix": round(rms_mix, 6),
         }
         print(f"  Duration : {duration:.1f} s  |  samples : {len(audio):,}")
         return audio, info
@@ -253,11 +246,15 @@ class SyncTagger:
         print("  Classifying instruments (stem-aware)…")
         instruments = self._classify_instruments(embeddings, stem_info)
 
+        print("  Classifying track type…")
+        track_types = self._rank(mix, TRACK_TYPES, top_k=1)
+
         return {
             "genre": genres,
             "mood": moods,
             "tempo": tempos,
             "instruments": instruments,
+            "track_type": track_types,
         }
 
     def _classify_instruments(self, embeddings: dict, stem_info: dict) -> list:
@@ -297,97 +294,43 @@ class SyncTagger:
         return results
 
     # ------------------------------------------------------------------ #
-    # Stage 5 — LLM Semantic Synthesis
+    # Metadata Builder
     # ------------------------------------------------------------------ #
 
-    def _synthesize(self, classification: dict, stem_info: dict, audio_info: dict) -> dict:
+    def _build_metadata(self, classification: dict, stem_info: dict, audio_info: dict) -> dict:
         """
-        Call Gemini with the structured analysis results.
-        Returns a dict with 'pitch' and 'metadata' keys.
+        Derive DISCO-ready metadata dict from classification results.
+        Title, Artist, and Album are left empty; the API caller injects them.
         """
-        try:
-            from google import genai  # type: ignore
-        except ImportError:
-            return {"error": "google-genai not installed. Run: pip install google-genai"}
-
-        if not self._api_key:
-            return {"error": "GEMINI_API_KEY is not set"}
-
-        client = genai.Client(api_key=self._api_key)
-
-        # Build context for the LLM
-        has_vocals = stem_info.get("vocals", {}).get("present", False)
-        stem_energies = {k: v["energy_rms"] for k, v in stem_info.items()}
-        top_genres = [r["tag"] for r in classification["genre"][:3]]
-        top_moods = [r["tag"] for r in classification["mood"][:5]]
-        top_instruments = [r["tag"] for r in classification["instruments"][:6]]
+        top_genres = [r["tag"] for r in classification["genre"][:_TOP_GENRE]]
+        top_moods = [r["tag"] for r in classification["mood"][:_TOP_MOOD]]
+        top_instruments = [r["tag"] for r in classification["instruments"][:_TOP_INSTRUMENT]]
         tempo = classification["tempo"][0]["tag"] if classification["tempo"] else "Medium"
+        track_type = classification["track_type"][0]["tag"] if classification.get("track_type") else ""
 
-        system_prompt = (
-            "You are a professional Music Supervisor with 20 years of experience placing music "
-            "in film, TV, advertising, and video games. You write concise, persuasive sync "
-            "licensing pitches and produce accurate metadata for submission to DISCO.ac."
-        )
+        has_vocals = stem_info.get("vocals", {}).get("present", False)
+        vocal = "Vocal" if has_vocals else "Instrumental"
 
-        user_prompt = f"""A music track has been analyzed by an AI audio pipeline. Here are the results:
+        rms_mix = audio_info.get("rms_mix", 0.0)
+        energy = min(10, max(1, round(rms_mix * 50)))
 
-AUDIO INFO:
-- Duration     : {audio_info['duration']:.1f} seconds
-- Has Vocals   : {has_vocals}
-- Stem Energy  : {stem_energies}
-
-AI-DETECTED CHARACTERISTICS:
-- Top Genres    : {top_genres}
-- Top Moods     : {top_moods}
-- Top Instruments: {top_instruments}
-- Tempo Category: {tempo}
-
-CONSTRAINED VOCABULARY — use ONLY these values for tagged fields:
-- Genres     : {GENRES}
-- Moods      : {MOODS}
-- Instruments: {INSTRUMENTS}
-- Tempos     : {TEMPOS}
-- Track Types: {TRACK_TYPES}
-
-Return ONLY a valid JSON object (no markdown fences, no extra text) with this exact schema:
-{{
-  "pitch": "<2-sentence sync pitch mentioning specific placement opportunities (TV genres, film tone, ad campaigns, etc.)>",
-  "metadata": {{
-    "Title"      : "Untitled",
-    "Artist"     : "Unknown",
-    "Album"      : "",
-    "Genre"      : "<single best genre from Genres list>",
-    "Mood"       : <list of 3 moods from Moods list>,
-    "Instruments": <list of instruments from Instruments list matching the detected top instruments>,
-    "Tempo"      : "<single tempo from Tempos list>",
-    "Energy"     : <integer 1–10 based on RMS levels and mood>,
-    "Vocal"      : "<Instrumental or Vocal>",
-    "Track_Type" : "<single type from Track Types list>",
-    "BPM"        : null,
-    "ISRC"       : "",
-    "Comments"   : "<sync licensing notes: best scene types, target shows, emotional beats>",
-    "Composer"   : "",
-    "Year"       : null
-  }}
-}}"""
-
-        response = client.models.generate_content(
-            model=GEMINI_MODEL,
-            contents=[{"role": "user", "parts": [{"text": user_prompt}]}],
-            config={"system_instruction": system_prompt, "temperature": 0.2},
-        )
-
-        raw = response.text.strip()
-
-        # Strip markdown code fences if the model wraps them
-        if raw.startswith("```"):
-            lines = raw.split("\n")
-            raw = "\n".join(line for line in lines if not line.startswith("```")).strip()
-
-        try:
-            return json.loads(raw)
-        except json.JSONDecodeError:
-            return {"error": "LLM returned non-JSON", "raw": raw[:500]}
+        return {
+            "Title": "",
+            "Artist": "",
+            "Album": "",
+            "Genre": top_genres[0] if top_genres else "",
+            "Mood": top_moods[:3],
+            "Instruments": top_instruments,
+            "Tempo": tempo,
+            "Energy": energy,
+            "Vocal": vocal,
+            "Track_Type": track_type,
+            "BPM": None,
+            "ISRC": "",
+            "Comments": "",
+            "Composer": "",
+            "Year": None,
+        }
 
 
 # ---------------------------------------------------------------------------
@@ -435,7 +378,7 @@ def main():
     result = tagger.run(args.input)
 
     if args.isrc:
-        result.setdefault("llm", {}).setdefault("metadata", {})["ISRC"] = args.isrc.strip()
+        result.setdefault("metadata", {})["ISRC"] = args.isrc.strip()
 
     output_json = json.dumps(result, indent=2, default=str)
     print("\n" + "=" * 60)

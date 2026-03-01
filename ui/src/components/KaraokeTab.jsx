@@ -124,6 +124,7 @@ export default function KaraokeTab() {
                             audioBlob={resultBlob}
                             fileName={resultName}
                             color="#e63946"
+                            autoPlay={true}
                         />
                         <button className="btn btn-secondary" style={{ marginTop: '1rem', width: '100%' }} onClick={download}>
                             ⬇ Download Instrumental

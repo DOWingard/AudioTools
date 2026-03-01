@@ -5,9 +5,13 @@ import { useGatedRun } from '../AuthContext.jsx';
 const API_BASE = '/api';
 
 const FORMATS = [
-    { id: 'mp3', label: 'MP3', desc: 'Universal, lossy' },
-    { id: 'wav', label: 'WAV', desc: 'Lossless, large' },
-    { id: 'flac', label: 'FLAC', desc: 'Lossless, compressed' },
+    { id: 'mp3',  label: 'MP3',  desc: 'Lossy · universal' },
+    { id: 'wav',  label: 'WAV',  desc: 'PCM · lossless' },
+    { id: 'flac', label: 'FLAC', desc: 'Lossless · compressed' },
+    { id: 'aiff', label: 'AIFF', desc: 'PCM · Apple / DAW' },
+    { id: 'aac',  label: 'AAC',  desc: 'Lossy · streaming' },
+    { id: 'm4a',  label: 'M4A',  desc: 'AAC · iTunes / mobile' },
+    { id: 'ogg',  label: 'OGG',  desc: 'Vorbis · open source' },
 ];
 
 export default function FormatConverterTab() {

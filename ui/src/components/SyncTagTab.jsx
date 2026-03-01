@@ -10,7 +10,12 @@ export default function SyncTagTab() {
     const requireAuth = useGatedRun();
     const { getToken } = useAuth();
     const [file, setFile] = useState(null);
+    const [title, setTitle] = useState('');
+    const [artist, setArtist] = useState('');
+    const [album, setAlbum] = useState('');
     const [isrc, setIsrc] = useState('');
+    const [bpm, setBpm] = useState('');
+    const [genre, setGenre] = useState('');
     const [loading, setLoading] = useState(false);
     const [progress, setProgress] = useState({ pct: 0, text: '' });
     const [result, setResult] = useState(null);   // { meta, audioBlob, audioName, csvBlob, csvName }
@@ -34,7 +39,12 @@ export default function SyncTagTab() {
         try {
             const form = new FormData();
             form.append('audio', file);
+            form.append('title', title.trim());
+            form.append('artist', artist.trim());
+            form.append('album', album.trim());
             form.append('isrc', isrc.trim());
+            form.append('bpm', bpm.trim());
+            form.append('genre', genre.trim());
 
             const token = await getToken();
             const headers = token ? { Authorization: `Bearer ${token}` } : {};
@@ -66,7 +76,7 @@ export default function SyncTagTab() {
             // Tagged audio
             let audioBlob = null, audioName = null;
             for (const name of Object.keys(zip.files)) {
-                if (/\.(wav|flac|mp3|ogg|aiff?)$/i.test(name)) {
+                if (/\.(wav|flac|mp3|ogg|aiff?|m4a|aac)$/i.test(name)) {
                     audioBlob = await zip.files[name].async('blob');
                     audioName = name;
                     break;
@@ -127,14 +137,64 @@ export default function SyncTagTab() {
                             />
                         </div>
 
-                        <div style={{ marginTop: '1.5rem' }}>
-                            <label className="field-label">ISRC (optional)</label>
-                            <input
-                                className="text-input"
-                                placeholder="e.g. GB-ABC-25-00001"
-                                value={isrc}
-                                onChange={(e) => setIsrc(e.target.value)}
-                            />
+                        <div style={{ marginTop: '1.5rem', display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
+                            <div>
+                                <label className="field-label">Title (optional)</label>
+                                <input
+                                    className="text-input"
+                                    placeholder="Song title"
+                                    value={title}
+                                    onChange={(e) => setTitle(e.target.value)}
+                                />
+                            </div>
+                            <div>
+                                <label className="field-label">Artist (optional)</label>
+                                <input
+                                    className="text-input"
+                                    placeholder="Artist name"
+                                    value={artist}
+                                    onChange={(e) => setArtist(e.target.value)}
+                                />
+                            </div>
+                            <div>
+                                <label className="field-label">Album (optional)</label>
+                                <input
+                                    className="text-input"
+                                    placeholder="Album name"
+                                    value={album}
+                                    onChange={(e) => setAlbum(e.target.value)}
+                                />
+                            </div>
+                            <div>
+                                <label className="field-label">Genre override (optional)</label>
+                                <input
+                                    className="text-input"
+                                    placeholder="e.g. Electronic"
+                                    value={genre}
+                                    onChange={(e) => setGenre(e.target.value)}
+                                />
+                            </div>
+                            <div>
+                                <label className="field-label">BPM override (optional)</label>
+                                <input
+                                    className="text-input"
+                                    type="number"
+                                    min="1"
+                                    max="999"
+                                    placeholder="e.g. 128"
+                                    value={bpm}
+                                    onChange={(e) => setBpm(e.target.value)}
+                                />
+                            </div>
+                            <div>
+                                <label className="field-label">ISRC (optional)</label>
+                                <input
+                                    className="text-input"
+                                    placeholder="e.g. GB-ABC-25-00001"
+                                    value={isrc}
+                                    onChange={(e) => setIsrc(e.target.value)}
+                                />
+                            </div>
                         </div>
 
                         <button
@@ -170,6 +230,7 @@ export default function SyncTagTab() {
                                             label="🎧 Tagged Audio"
                                             audioBlob={result.audioBlob}
                                             fileName={result.audioName}
+                                            autoPlay={true}
                                         />
                                     </div>
                                 )}
@@ -207,12 +268,10 @@ export default function SyncTagTab() {
 /* ── Summary card sub-component ────────────────────────────────────────── */
 
 function SummaryCard({ meta }) {
-    const llm = meta?.llm || {};
-    const md = llm.metadata || {};
+    const md = meta?.metadata || {};
     const tags = meta?.tags || {};
     const info = meta?.audio_info || {};
 
-    const pitch = llm.pitch;
     const comments = md.Comments;
     const genre = md.Genre || (tags.genre || [''])[0];
     const mood = Array.isArray(md.Mood || tags.mood)
@@ -227,10 +286,10 @@ function SummaryCard({ meta }) {
 
     return (
         <div className="summary-card">
-            {pitch && (
+            {comments && (
                 <>
-                    <h2>Pitch</h2>
-                    <p className="pitch-text">{pitch}</p>
+                    <h2>Sync Notes</h2>
+                    <p className="pitch-text">{comments}</p>
                 </>
             )}
 
@@ -246,12 +305,6 @@ function SummaryCard({ meta }) {
                 {isrcVal && <li><strong>ISRC:</strong> {isrcVal}</li>}
             </ul>
 
-            {comments && (
-                <>
-                    <h2>Sync Notes</h2>
-                    <p className="pitch-text">{comments}</p>
-                </>
-            )}
         </div>
     );
 }

@@ -13,6 +13,7 @@
  */
 
 import { useState, useEffect, useRef, useCallback, useMemo, Suspense, lazy } from 'react';
+import { createPortal } from 'react-dom';
 import { useAuth } from '@clerk/clerk-react';
 import * as THREE from 'three';
 import WaveformPlayer from './WaveformPlayer.jsx';
@@ -26,35 +27,38 @@ const API_BASE = '/api';
 /* ─── Constants ────────────────────────────────────────────────────────────── */
 
 const PROCESS_META = {
-    separate:  { label: 'Stem Separator',   icon: '🎛️', color: '#7c3aed' },
-    tag:       { label: 'SyncTag',           icon: '🏷️', color: '#e63946' },
-    karaoke:   { label: 'Vocal Remover',    icon: '🎤', color: '#2563eb' },
-    cut:       { label: 'Audio Cutter',     icon: '✂️', color: '#059669' },
-    join:      { label: 'Audio Joiner',     icon: '🔗', color: '#d97706' },
-    convert:   { label: 'Format Converter', icon: '🔄', color: '#0891b2' },
-    analyze:   { label: 'Track Analyzer',   icon: '📊', color: '#f59e0b' },
+    separate: { label: 'Stem Separator', icon: '🎛️', color: '#7c3aed' },
+    tag: { label: 'SyncTag', icon: '🏷️', color: '#e63946' },
+    karaoke: { label: 'Vocal Remover', icon: '🎤', color: '#2563eb' },
+    cut: { label: 'Audio Cutter', icon: '✂️', color: '#059669' },
+    join: { label: 'Audio Joiner', icon: '🔗', color: '#d97706' },
+    convert: { label: 'Format Converter', icon: '🔄', color: '#0891b2' },
+    analyze: { label: 'Track Analyzer', icon: '📊', color: '#f59e0b' },
+    upload: { label: 'Uploaded', icon: '📤', color: '#6366f1' },
 };
 
 const SUBGROUP_META = {
-    main:         { label: 'Main Stems',    color: '#7c3aed' },
-    drums:        { label: 'Drum Stems',    color: '#2563eb' },
-    oneshots:     { label: 'One-Shots',     color: '#059669' },
-    tagged:       { label: 'Tagged Track',  color: '#e63946' },
-    instrumental: { label: 'Instrumental',  color: '#2563eb' },
-    trimmed:      { label: 'Trimmed',       color: '#059669' },
-    joined:       { label: 'Joined',        color: '#d97706' },
-    converted:    { label: 'Converted',     color: '#0891b2' },
-    analyzed:     { label: 'Analyzed',      color: '#f59e0b' },
+    main: { label: 'Main Stems', color: '#7c3aed' },
+    drums: { label: 'Drum Stems', color: '#2563eb' },
+    oneshots: { label: 'One-Shots', color: '#059669' },
+    tagged: { label: 'Tagged Track', color: '#e63946' },
+    instrumental: { label: 'Instrumental', color: '#2563eb' },
+    trimmed: { label: 'Trimmed', color: '#059669' },
+    joined: { label: 'Joined', color: '#d97706' },
+    converted: { label: 'Converted', color: '#0891b2' },
+    analyzed: { label: 'Analyzed', color: '#f59e0b' },
+    uploaded: { label: 'Uploaded', color: '#6366f1' },
 };
 
 const PROCESS_SUBGROUP_ORDER = {
     separate: ['main', 'drums', 'oneshots'],
-    tag:      ['tagged'],
-    karaoke:  ['instrumental'],
-    cut:      ['trimmed'],
-    join:     ['joined'],
-    convert:  ['converted'],
-    analyze:  ['analyzed'],
+    tag: ['tagged'],
+    karaoke: ['instrumental'],
+    cut: ['trimmed'],
+    join: ['joined'],
+    convert: ['converted'],
+    analyze: ['analyzed'],
+    upload: ['uploaded'],
 };
 
 /* ─── Helpers ───────────────────────────────────────────────────────────────── */
@@ -136,14 +140,22 @@ function makeNodeObj(node, isHighlighted, isPlaying) {
 
 /* ─── NowPlaying bar (fixed bottom) ─────────────────────────────────────── */
 
-function NowPlayingBar({ nowPlaying, onClose }) {
+function NowPlayingBar({ nowPlaying, onClose, onPrev, onNext }) {
     if (!nowPlaying) return null;
     const proc = PROCESS_META[nowPlaying.process_type] || {};
     const sg = SUBGROUP_META[nowPlaying.subgroup] || {};
 
-    return (
+    const navBtnStyle = {
+        background: 'none', border: '1px solid var(--border)',
+        borderRadius: 'var(--radius-full)', width: 28, height: 28, minWidth: 28,
+        cursor: 'pointer', color: 'var(--text-secondary)', fontSize: '0.8rem',
+        display: 'flex', alignItems: 'center', justifyContent: 'center',
+        transition: 'all 0.15s',
+    };
+
+    return createPortal(
         <div style={{
-            position: 'fixed', bottom: 0, left: 0, right: 0, zIndex: 300,
+            position: 'fixed', bottom: 0, left: 0, right: 0, zIndex: 9999,
             background: 'rgba(255,255,255,0.97)',
             borderTop: '2px solid var(--border-bright)',
             backdropFilter: 'blur(12px)',
@@ -175,6 +187,8 @@ function NowPlayingBar({ nowPlaying, onClose }) {
                             Loading…
                         </span>
                     )}
+                    <button onClick={onPrev} style={navBtnStyle} title="Previous file (↑)">▲</button>
+                    <button onClick={onNext} style={navBtnStyle} title="Next file (↓)">▼</button>
                     <button
                         onClick={onClose}
                         style={{
@@ -193,10 +207,12 @@ function NowPlayingBar({ nowPlaying, onClose }) {
                         audioBlob={nowPlaying.blob}
                         fileName={nowPlaying.filename}
                         color={proc.color || '#e63946'}
+                        autoPlay={!!nowPlaying.autoPlay}
                     />
                 )}
             </div>
-        </div>
+        </div>,
+        document.body
     );
 }
 
@@ -204,13 +220,16 @@ function NowPlayingBar({ nowPlaying, onClose }) {
 
 function FileRow({ file, isPlaying, isLoading, onPlay, accentColor }) {
     return (
-        <div style={{
-            display: 'flex', alignItems: 'center', gap: '0.75rem',
-            background: isPlaying ? `${accentColor}11` : 'var(--bg-surface)',
-            border: `1px solid ${isPlaying ? accentColor + '44' : 'var(--border)'}`,
-            borderRadius: 'var(--radius-md)', padding: '0.7rem 0.875rem',
-            marginBottom: '0.5rem', transition: 'all 0.15s',
-        }}>
+        <div
+            data-file-id={file.id}
+            style={{
+                display: 'flex', alignItems: 'center', gap: '0.75rem',
+                background: isPlaying ? `${accentColor}11` : 'var(--bg-surface)',
+                border: `1px solid ${isPlaying ? accentColor + '44' : 'var(--border)'}`,
+                borderRadius: 'var(--radius-md)', padding: '0.7rem 0.875rem',
+                marginBottom: '0.5rem', transition: 'all 0.15s',
+            }}
+        >
             <button
                 onClick={onPlay}
                 disabled={isLoading}
@@ -345,7 +364,7 @@ function FilesView({ files, loading, error, nowPlaying, loadingId, onPlay, onRef
                                             isPlaying={nowPlaying?.id === f.id}
                                             isLoading={loadingId === f.id}
                                             accentColor={sgMeta.color}
-                                            onPlay={() => onPlay(f)}
+                                            onPlay={() => onPlay(f, { autoPlay: true })}
                                         />
                                     ))}
                                 </div>
@@ -492,7 +511,7 @@ function SearchPanel({ token, results, hasMore, searchLoading, onSearch, onLoadM
                             disabled={searchLoading}
                             onClick={handleLoadMore}
                         >
-                            {searchLoading ? '⏳' : '+ 5 More'}
+                            {searchLoading ? '⏳' : '+ 10 More'}
                         </button>
                     )}
                 </div>
@@ -570,7 +589,7 @@ function SmartGraph({ token, nowPlaying, loadingId, onPlay, graphRefreshKey }) {
             if (mode === 'audio' && file) form.append('audio', file);
             else form.append('query_text', text);
             form.append('offset', String(offset));
-            form.append('limit', '5');
+            form.append('limit', '10');
 
             const resp = await fetch(`${API_BASE}/files/search`, {
                 method: 'POST',
@@ -811,6 +830,11 @@ export default function MyFilesTab() {
     const [filesError, setFilesError] = useState('');
     const [token, setToken] = useState(null);
 
+    // Bulk upload state
+    const [bulkUploading, setBulkUploading] = useState(false);
+    const [bulkStatus, setBulkStatus] = useState('');
+    const bulkInputRef = useRef(null);
+
     // NowPlaying state
     const [nowPlaying, setNowPlaying] = useState(null); // {id, filename, process_type, subgroup, duration, blob, loading}
     const [loadingId, setLoadingId] = useState(null);
@@ -906,7 +930,7 @@ export default function MyFilesTab() {
     }, []);
 
     // Load audio for a file (from either list or graph)
-    const handlePlay = useCallback(async (file) => {
+    const handlePlay = useCallback(async (file, { autoPlay = false } = {}) => {
         // If clicking the already-playing file, just surface the bar (don't re-fetch)
         if (nowPlaying?.id === file.id && !nowPlaying?.loading) return;
 
@@ -919,6 +943,7 @@ export default function MyFilesTab() {
             duration: file.duration,
             blob: null,
             loading: true,
+            autoPlay,
         });
 
         try {
@@ -940,6 +965,99 @@ export default function MyFilesTab() {
             setLoadingId(null);
         }
     }, [nowPlaying, token, getToken]);
+
+    // ── Flat ordered file list (matches FilesView render order) ───────────
+    const orderedFiles = useMemo(() => {
+        const g = {};
+        for (const f of files) {
+            const pt = f.process_type || 'other';
+            const sg = f.subgroup || 'other';
+            if (!g[pt]) g[pt] = {};
+            if (!g[pt][sg]) g[pt][sg] = [];
+            g[pt][sg].push(f);
+        }
+        const processTypes = Object.keys(g).sort((a, b) => {
+            const la = Math.max(...Object.values(g[a]).flat().map(f => +new Date(f.created_at || 0)));
+            const lb = Math.max(...Object.values(g[b]).flat().map(f => +new Date(f.created_at || 0)));
+            return lb - la;
+        });
+        const flat = [];
+        for (const pt of processTypes) {
+            const subOrder = PROCESS_SUBGROUP_ORDER[pt] || Object.keys(g[pt]);
+            for (const sg of subOrder) {
+                if (g[pt]?.[sg]) flat.push(...g[pt][sg]);
+            }
+        }
+        return flat;
+    }, [files]);
+
+    // ── Navigate prev/next in the file list ───────────────────────────────
+    const navigateFiles = useCallback((dir) => {
+        if (orderedFiles.length === 0) return;
+        // Stop every playing WaveformPlayer and native <audio> immediately.
+        window.dispatchEvent(new CustomEvent('waveform:stop-all'));
+        const idx = orderedFiles.findIndex(f => f.id === nowPlaying?.id);
+        const next = dir > 0
+            ? orderedFiles[(idx + 1) % orderedFiles.length]
+            : orderedFiles[(idx - 1 + orderedFiles.length) % orderedFiles.length];
+        handlePlay(next, { autoPlay: true });
+        requestAnimationFrame(() => {
+            document.querySelector(`[data-file-id="${next.id}"]`)
+                ?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+        });
+    }, [orderedFiles, nowPlaying?.id, handlePlay]);
+
+    // ── Arrow-key navigation (only when Files sub-tab is visible) ─────────
+    useEffect(() => {
+        if (view !== 'files') return;
+        const onKey = (e) => {
+            if (e.key !== 'ArrowUp' && e.key !== 'ArrowDown') return;
+            const tag = document.activeElement?.tagName;
+            if (tag === 'INPUT' || tag === 'TEXTAREA' || document.activeElement?.isContentEditable) return;
+            e.preventDefault();
+            navigateFiles(e.key === 'ArrowDown' ? 1 : -1);
+        };
+        window.addEventListener('keydown', onKey);
+        return () => window.removeEventListener('keydown', onKey);
+    }, [view, navigateFiles]);
+
+    // ── Bulk upload handler ────────────────────────────────────────────────
+    const handleBulkUpload = useCallback(async (e) => {
+        const selectedFiles = Array.from(e.target.files || []);
+        if (selectedFiles.length === 0) return;
+        // Reset the input so the same selection can be re-triggered
+        e.target.value = '';
+
+        setBulkUploading(true);
+        setBulkStatus(`Uploading ${selectedFiles.length} file${selectedFiles.length > 1 ? 's' : ''}…`);
+        try {
+            const t = token || await getToken();
+            const form = new FormData();
+            selectedFiles.forEach(f => form.append('audio', f));
+
+            const resp = await fetch(`${API_BASE}/files/upload`, {
+                method: 'POST',
+                body: form,
+                headers: { Authorization: `Bearer ${t}` },
+            });
+            if (!resp.ok) {
+                const text = await resp.text();
+                throw new Error(`API ${resp.status}: ${text}`);
+            }
+            const data = await resp.json();
+            setBulkStatus(`✅ ${data.queued} file${data.queued !== 1 ? 's' : ''} queued for embedding`);
+            // Refresh file list + start polling for new embeddings
+            fetchFiles();
+            startPolling();
+            localStorage.setItem('lastProcessedAt', String(Date.now()));
+        } catch (err) {
+            setBulkStatus(`❌ ${err.message}`);
+        } finally {
+            setBulkUploading(false);
+            // Clear status after 6 seconds
+            setTimeout(() => setBulkStatus(''), 6000);
+        }
+    }, [token, getToken, fetchFiles, startPolling]);
 
     if (!isSignedIn) {
         return (
@@ -974,7 +1092,7 @@ export default function MyFilesTab() {
     const graphHeight = 'calc(100vh - var(--topbar-h) - 3rem)';
 
     return (
-        <div className="fade-in" style={{ paddingBottom: nowPlaying ? 180 : 0 }}>
+        <div className="fade-in" style={{ paddingBottom: nowPlaying ? 170 : 0 }}>
             {/* ── Header + sub-tab bar ──────────────────────────── */}
             <div className="card" style={{ marginBottom: '1.5rem' }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '1rem', flexWrap: 'wrap' }}>
@@ -992,7 +1110,7 @@ export default function MyFilesTab() {
                         </p>
                     </div>
 
-                    <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+                    <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', flexWrap: 'wrap' }}>
                         {/* Saved Files sub-tab */}
                         <button
                             className={`btn ${view === 'files' ? 'btn-primary' : 'btn-secondary'}`}
@@ -1021,6 +1139,34 @@ export default function MyFilesTab() {
                             )}
                         </button>
 
+                        {/* Bulk Upload to Graph */}
+                        <button
+                            className="btn btn-secondary"
+                            style={{ padding: '0.4rem 1rem', fontSize: '0.82rem', position: 'relative' }}
+                            disabled={bulkUploading}
+                            onClick={() => {
+                                if (!isPremium) { openSubModal('premium'); return; }
+                                bulkInputRef.current?.click();
+                            }}
+                        >
+                            {bulkUploading ? '⏳ Uploading…' : '📤 Upload to Graph'}
+                            {!isPremium && (
+                                <span style={{
+                                    marginLeft: '0.35rem', fontSize: '0.62rem',
+                                    background: '#f59e0b', color: '#fff',
+                                    borderRadius: 'var(--radius-full)', padding: '0.05rem 0.35rem', fontWeight: 700,
+                                }}>PRO</span>
+                            )}
+                        </button>
+                        <input
+                            ref={bulkInputRef}
+                            type="file"
+                            multiple
+                            hidden
+                            accept=".wav,.flac,.mp3,.aac,.aif,.aiff,.ogg"
+                            onChange={handleBulkUpload}
+                        />
+
                         {view === 'files' && (
                             <button
                                 className="btn btn-secondary"
@@ -1037,6 +1183,15 @@ export default function MyFilesTab() {
             {filesError && (
                 <div className="card" style={{ marginBottom: '1.5rem' }}>
                     <p className="status-error">❌ {filesError}</p>
+                </div>
+            )}
+
+            {bulkStatus && (
+                <div className="card" style={{ marginBottom: '1.5rem' }}>
+                    <p style={{
+                        margin: 0, fontSize: '0.9rem', fontWeight: 500,
+                        color: bulkStatus.startsWith('❌') ? 'var(--danger)' : 'var(--text-secondary)',
+                    }}>{bulkStatus}</p>
                 </div>
             )}
 
@@ -1070,8 +1225,13 @@ export default function MyFilesTab() {
                 </div>
             )}
 
-            {/* ── NowPlaying bar ───────────────────────────────────── */}
-            <NowPlayingBar nowPlaying={nowPlaying} onClose={() => setNowPlaying(null)} />
+            {/* ── NowPlaying bar (portalled to document.body to escape CSS transforms) */}
+            <NowPlayingBar
+                nowPlaying={nowPlaying}
+                onClose={() => setNowPlaying(null)}
+                onPrev={() => navigateFiles(-1)}
+                onNext={() => navigateFiles(1)}
+            />
         </div>
     );
 }

@@ -1,6 +1,11 @@
 import { useRef, useEffect, useState, useCallback } from 'react';
 import WaveSurfer from 'wavesurfer.js';
 
+// Module-level counter so each instance gets a stable unique ID.
+let _instanceCounter = 0;
+const PLAY_EVENT = 'waveform:play-started';
+const STOP_ALL_EVENT = 'waveform:stop-all';
+
 /**
  * WaveformPlayer — renders the ENTIRE waveform at full container width.
  * No horizontal scroll. WaveSurfer draws the complete waveform into a
@@ -12,7 +17,7 @@ import WaveSurfer from 'wavesurfer.js';
  *   fileName — original filename for download
  *   color    — waveform fill color (optional)
  */
-export default function WaveformPlayer({ label, audioBlob, fileName, color }) {
+export default function WaveformPlayer({ label, audioBlob, fileName, color, autoPlay = false }) {
     const containerRef = useRef(null);
     const wsRef = useRef(null);
     const [playing, setPlaying] = useState(false);
@@ -21,6 +26,23 @@ export default function WaveformPlayer({ label, audioBlob, fileName, color }) {
     const [volume, setVolume] = useState(1);
     const [muted, setMuted] = useState(false);
     const prevVolumeRef = useRef(1);
+    const autoPlayRef = useRef(autoPlay);
+    autoPlayRef.current = autoPlay;
+    // Stable ID for this instance — used to ignore our own broadcast.
+    const instanceId = useRef(++_instanceCounter);
+
+    // Pause this player when any other WaveformPlayer starts playing, or on stop-all.
+    useEffect(() => {
+        const id = instanceId.current;
+        const onOtherPlay = (e) => { if (e.detail !== id) wsRef.current?.pause(); };
+        const onStopAll = () => wsRef.current?.pause();
+        window.addEventListener(PLAY_EVENT, onOtherPlay);
+        window.addEventListener(STOP_ALL_EVENT, onStopAll);
+        return () => {
+            window.removeEventListener(PLAY_EVENT, onOtherPlay);
+            window.removeEventListener(STOP_ALL_EVENT, onStopAll);
+        };
+    }, []);
 
     const waveColor = color || '#7c3aed';
     const progressColor = color ? lighten(color) : '#a78bfa';
@@ -48,6 +70,7 @@ export default function WaveformPlayer({ label, audioBlob, fileName, color }) {
         ws.on('ready', () => {
             setDuration(ws.getDuration());
             ws.setVolume(volume);
+            if (autoPlayRef.current) ws.play();
         });
 
         ws.on('audioprocess', () => {
@@ -62,7 +85,10 @@ export default function WaveformPlayer({ label, audioBlob, fileName, color }) {
             setPlaying(false);
         });
 
-        ws.on('play', () => setPlaying(true));
+        ws.on('play', () => {
+            setPlaying(true);
+            window.dispatchEvent(new CustomEvent(PLAY_EVENT, { detail: instanceId.current }));
+        });
         ws.on('pause', () => setPlaying(false));
 
         wsRef.current = ws;

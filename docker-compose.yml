@@ -1,4 +1,43 @@
 services:
+  minio:
+    image: minio/minio:latest
+    container_name: syntag_minio
+    command: server /data --console-address ":9001"
+    environment:
+      # Use the same credentials as R2 so compute can switch between them seamlessly.
+      MINIO_ROOT_USER: ${R2_ACCESS_KEY_ID:-minioadmin}
+      MINIO_ROOT_PASSWORD: ${R2_SECRET_ACCESS_KEY:-minioadmin}
+    volumes:
+      - minio_data:/data
+    ports:
+      - "9010:9000"   # S3 API  (9000 may be taken by another project)
+      - "9011:9001"   # MinIO Console (admin UI)
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  minio-init:
+    image: minio/mc:latest
+    container_name: syntag_minio_init
+    depends_on:
+      minio:
+        condition: service_healthy
+    environment:
+      MINIO_ACCESS_KEY: ${R2_ACCESS_KEY_ID:-minioadmin}
+      MINIO_SECRET_KEY: ${R2_SECRET_ACCESS_KEY:-minioadmin}
+      MINIO_BUCKET: ${R2_BUCKET_NAME:-syntag-audio}
+    entrypoint: >
+      /bin/sh -c "
+        mc alias set local http://minio:9000 $$MINIO_ACCESS_KEY $$MINIO_SECRET_KEY &&
+        mc mb --ignore-existing local/$$MINIO_BUCKET &&
+        echo 'MinIO bucket ready.' &&
+        exit 0
+      "
+    restart: "no"
+
   qdrant:
     image: qdrant/qdrant:v1.9.0
     container_name: syntag_qdrant
@@ -61,14 +100,24 @@ services:
       - PYTHONPATH=/app
       - QDRANT_URL=http://qdrant:6333
       - AUTH_SERVICE_URL=http://auth:8001
+      # Object storage — overridden from .env
+      - R2_BUCKET_NAME=${R2_BUCKET_NAME:-syntag-audio}
+      - S3_ENDPOINT_URL=${S3_ENDPOINT_URL:-http://minio:9000}
+      - S3_PUBLIC_ENDPOINT_URL=${S3_PUBLIC_ENDPOINT_URL:-http://localhost:9010}
+      - R2_ACCOUNT_ID=${R2_ACCOUNT_ID:-}
+      - R2_ACCESS_KEY_ID=${R2_ACCESS_KEY_ID:-minioadmin}
+      - R2_SECRET_ACCESS_KEY=${R2_SECRET_ACCESS_KEY:-minioadmin}
+      # Dev/test bypass: set to a clerk_id to skip Clerk JWT validation in endpoints
+      - DEV_USER_ID=${DEV_USER_ID:-}
     volumes:
-      - user_files_data:/data/user_files
       - ./LARS:/app/LARS:ro
     depends_on:
       qdrant:
         condition: service_started
       auth:
         condition: service_healthy
+      minio-init:
+        condition: service_completed_successfully
     restart: unless-stopped
     healthcheck:
       test: [ "CMD-SHELL", "curl -f http://localhost:8000/health || exit 1" ]
@@ -99,4 +148,4 @@ services:
 volumes:
   postgres_data:
   qdrant_data:
-  user_files_data:
+  minio_data:

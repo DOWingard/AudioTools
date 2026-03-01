@@ -6,24 +6,33 @@
 
 | Area | Location | Descriptor |
 |------|----------|------------|
-| **Infrastructure** | `infra/` | [AGENT-INFRA.md](infra/AGENT-INFRA.md) |
-| **Scripts** | `scripts/` | [AGENT-SCRIPTS.md](scripts/AGENT-SCRIPTS.md) |
 | **Agent Context** | `AGENT-CONTEXT/` | [AGENT-CONTEXT.md](AGENT-CONTEXT/AGENT-CONTEXT.md) |
 | **Agent Skills** | `.agent/skills/` | [AGENT-SKILLS.md](.agent/skills/AGENT-SKILLS.md) |
+| **Scripts** | `scripts/` | `agent-services.sh` — Docker + webhook bootstrap |
 
 ## Key Files
 
 | File | Purpose |
-|------|---------|
+|------|---------|-
 | `AGENT-MAP.md` | This file. The root of the knowledge graph. |
-| `docker-compose.yml` | Infrastructure definition (if applicable). |
+| `AGENT-CONTEXT/AGENT-CONTEXT.md` | System architecture, file map, and triage table. |
+| `AGENT-CONTEXT/BackendFiles.md` | Deep-dive: embedding pipeline, storage, auth, all API endpoints. |
+| `docker-compose.yml` | 7-service infrastructure definition. |
 
 ## Architecture
 
-*Use this section to draw a text-based diagram of your system.*
-
 ```
-[Frontend] <--> [Backend API] <--> [Database]
+┌──────────┐     ┌──────────┐     ┌──────────┐
+│  Vite UI │◀──▸ │ Compute  │◀──▸ │   Auth   │
+│  :7860   │     │  :8000   │     │  :8001   │
+└──────────┘     └────┬─────┘     └────┬─────┘
+                      │                │
+            ┌─────────┼────────┐       │
+            ▼         ▼        ▼       ▼
+        ┌───────┐ ┌───────┐ ┌───────┐ ┌───────┐
+        │Qdrant │ │R2/MinIO│ │/tmp/  │ │Postgres│
+        │:6333  │ │:9010   │ │staging│ │:5434   │
+        └───────┘ └───────┘ └───────┘ └───────┘
 ```
 
 ## Maintenance

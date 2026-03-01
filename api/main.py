@@ -13,6 +13,7 @@ Endpoints:
     POST /api/analyze              → JSON (comprehensive audio analysis)
     GET  /api/files                → JSON (user's stored files from Qdrant)
     GET  /api/files/{id}/audio     → Audio file (served from persistent storage)
+    POST /api/files/upload         → JSON (bulk upload audio into graph — premium)
     POST /api/files/search         → JSON (similarity search in user's graph — premium)
 """
 
@@ -39,11 +40,29 @@ from fastapi.responses import JSONResponse, StreamingResponse
 # Config
 # ---------------------------------------------------------------------------
 
-QDRANT_URL      = os.environ.get("QDRANT_URL", "http://localhost:6333")
+QDRANT_URL       = os.environ.get("QDRANT_URL", "http://localhost:6333")
 AUTH_SERVICE_URL = os.environ.get("AUTH_SERVICE_URL", "http://localhost:8001")
-USER_FILES_DIR  = Path(os.environ.get("USER_FILES_DIR", "/data/user_files"))
-COLLECTION_NAME = "master_audio_graph"
-VECTOR_DIM      = 768
+COLLECTION_NAME  = "master_audio_graph"
+VECTOR_DIM       = 768
+
+# Object storage (Cloudflare R2 or MinIO-compatible)
+R2_ACCOUNT_ID        = os.environ.get("R2_ACCOUNT_ID", "")
+R2_ACCESS_KEY_ID     = os.environ.get("R2_ACCESS_KEY_ID", "minioadmin")
+R2_SECRET_ACCESS_KEY = os.environ.get("R2_SECRET_ACCESS_KEY", "minioadmin")
+R2_BUCKET_NAME       = os.environ.get("R2_BUCKET_NAME", "syntag-audio")
+# S3_ENDPOINT_URL: explicit endpoint (MinIO). Leave blank to auto-derive from R2_ACCOUNT_ID.
+S3_ENDPOINT_URL      = os.environ.get("S3_ENDPOINT_URL", "")
+# S3_PUBLIC_ENDPOINT_URL: base for presigned URLs seen by browsers.
+# Needed only for MinIO where internal host != public host (e.g. minio:9000 vs localhost:9000).
+S3_PUBLIC_ENDPOINT_URL = os.environ.get("S3_PUBLIC_ENDPOINT_URL", "")
+
+# Staging dir: files live here between the HTTP handler and the background embed+upload task
+STAGING_DIR = Path(os.environ.get("STAGING_DIR", "/tmp/syntag_staging"))
+STAGING_DIR.mkdir(parents=True, exist_ok=True)
+
+# Dev/test bypass: if set, requests without a Bearer token use this clerk_id directly.
+# Never set in production. Gated by env var so it's inert unless explicitly enabled.
+DEV_USER_ID = os.environ.get("DEV_USER_ID", "").strip()
 
 # Thread pool for CPU-heavy background embedding (separate from FastAPI async workers)
 _embed_pool = ThreadPoolExecutor(max_workers=2, thread_name_prefix="embed")
@@ -57,11 +76,13 @@ app.add_middleware(
 )
 
 # ---------------------------------------------------------------------------
-# Lazy-init singletons — ML models load once on first request
+# Lazy-init singletons — ML models and S3 clients load once on first request
 # ---------------------------------------------------------------------------
-_tagger = None
+_tagger   = None
 _embedder = None
-_qdrant = None
+_qdrant   = None
+_s3_upload  = None   # boto3 client for PUT (internal endpoint)
+_s3_presign = None   # boto3 client for presigned GET (public endpoint)
 
 
 def _get_tagger():
@@ -78,6 +99,50 @@ def _get_embedder():
         from src.embedder import AudioEmbedder
         _embedder = AudioEmbedder()
     return _embedder
+
+
+def _s3_internal_endpoint() -> str:
+    """Endpoint used by the compute container to upload objects."""
+    if S3_ENDPOINT_URL:
+        return S3_ENDPOINT_URL
+    if R2_ACCOUNT_ID:
+        return f"https://{R2_ACCOUNT_ID}.r2.cloudflarestorage.com"
+    raise RuntimeError("No S3/R2 endpoint configured. Set R2_ACCOUNT_ID or S3_ENDPOINT_URL in .env.")
+
+
+def _s3_public_endpoint() -> str:
+    """Endpoint embedded in presigned URLs that the browser will fetch from."""
+    return S3_PUBLIC_ENDPOINT_URL or _s3_internal_endpoint()
+
+
+def _get_s3_upload():
+    """boto3 client for uploading objects (uses internal endpoint)."""
+    global _s3_upload
+    if _s3_upload is None:
+        import boto3
+        _s3_upload = boto3.client(
+            "s3",
+            endpoint_url=_s3_internal_endpoint(),
+            aws_access_key_id=R2_ACCESS_KEY_ID,
+            aws_secret_access_key=R2_SECRET_ACCESS_KEY,
+            region_name="auto",
+        )
+    return _s3_upload
+
+
+def _get_s3_presign():
+    """boto3 client for generating presigned URLs (uses public endpoint)."""
+    global _s3_presign
+    if _s3_presign is None:
+        import boto3
+        _s3_presign = boto3.client(
+            "s3",
+            endpoint_url=_s3_public_endpoint(),
+            aws_access_key_id=R2_ACCESS_KEY_ID,
+            aws_secret_access_key=R2_SECRET_ACCESS_KEY,
+            region_name="auto",
+        )
+    return _s3_presign
 
 
 # ---------------------------------------------------------------------------
@@ -168,9 +233,13 @@ async def _get_subscription_type(token: str) -> Optional[str]:
 # File persistence + background embedding helpers
 # ---------------------------------------------------------------------------
 
-def _persist_file(user_id: str, process_type: str, job_id: str, filename: str, src_path: Path) -> Path:
-    """Copy a processed audio file into persistent storage. Returns the dest path."""
-    dest_dir = USER_FILES_DIR / user_id / process_type / job_id
+def _stage_file(user_id: str, process_type: str, job_id: str, filename: str, src_path: Path) -> Path:
+    """
+    Copy a processed audio file into the staging dir so the background embed task
+    can read it after the HTTP handler's temp dir is cleaned up.
+    The embed task uploads to R2 then deletes the staged copy.
+    """
+    dest_dir = STAGING_DIR / user_id / process_type / job_id
     dest_dir.mkdir(parents=True, exist_ok=True)
     dest_path = dest_dir / filename
     shutil.copy2(str(src_path), str(dest_path))
@@ -191,7 +260,7 @@ def _get_duration(file_path: Path) -> float:
 
 
 def _embed_and_store_sync(
-    file_path: Path,
+    staged_path: Path,
     user_id: str,
     process_type: str,
     subgroup: str,
@@ -200,35 +269,43 @@ def _embed_and_store_sync(
     extra_payload: Optional[dict] = None,
 ) -> None:
     """
-    Synchronous: embed an audio file with M2D-CLAP and upsert into Qdrant.
-    Designed to run in a thread-pool executor so it doesn't block the event loop.
-    extra_payload: optional dict of additional fields merged into the Qdrant payload.
+    Synchronous (runs in thread-pool):
+      1. Embed staged_path with M2D-CLAP
+      2. Upload staged_path to R2/MinIO → r2_key
+      3. Upsert into Qdrant with r2_key in payload
+      4. Delete staged_path (cleanup)
     """
     import traceback
-    print(f"[qdrant] Starting embed: {file_path.name} ({process_type}/{subgroup}) user={user_id}")
+    r2_key = f"{user_id}/{process_type}/{job_id}/{staged_path.name}"
+    print(f"[r2] Starting embed+upload: {staged_path.name} → {r2_key}")
     try:
         from qdrant_client.models import PointStruct
 
+        # 1. Embed from local staging file
         embedder = _get_embedder()
-        waveform = embedder.load_audio(str(file_path))
+        waveform = embedder.load_audio(str(staged_path))
         embedding = embedder.embed(waveform)  # numpy (768,)
+        duration = _get_duration(staged_path)
+        file_size = staged_path.stat().st_size
 
-        duration = _get_duration(file_path)
+        # 2. Upload to R2/MinIO
+        s3 = _get_s3_upload()
+        s3.upload_file(str(staged_path), R2_BUCKET_NAME, r2_key)
+        print(f"[r2] ✓ Uploaded → s3://{R2_BUCKET_NAME}/{r2_key}")
 
-        # Deterministic ID: same file + user always maps to same Qdrant point
-        point_id = str(_uuid.uuid5(_uuid.NAMESPACE_URL, f"{user_id}:{file_path}"))
-
+        # 3. Upsert into Qdrant — point_id is deterministic on (user_id, r2_key)
+        point_id = str(_uuid.uuid5(_uuid.NAMESPACE_URL, f"{user_id}:{r2_key}"))
         payload = {
             "user_id": user_id,
-            "filename": file_path.name,
+            "filename": staged_path.name,
             "original_filename": original_filename,
             "process_type": process_type,
             "subgroup": subgroup,
-            "file_path": str(file_path),
+            "r2_key": r2_key,
             "job_id": job_id,
             "created_at": datetime.now(timezone.utc).isoformat(),
             "duration": round(duration, 2),
-            "file_size": file_path.stat().st_size,
+            "file_size": file_size,
         }
         if extra_payload:
             payload.update(extra_payload)
@@ -236,17 +313,19 @@ def _embed_and_store_sync(
         qdrant = _get_qdrant()
         qdrant.upsert(
             collection_name=COLLECTION_NAME,
-            points=[
-                PointStruct(
-                    id=point_id,
-                    vector=embedding.tolist(),
-                    payload=payload,
-                )
-            ],
+            points=[PointStruct(id=point_id, vector=embedding.tolist(), payload=payload)],
         )
-        print(f"[qdrant] ✓ Stored {file_path.name} ({process_type}/{subgroup}) for {user_id} — point_id={point_id}")
+        print(f"[qdrant] ✓ Stored {staged_path.name} ({process_type}/{subgroup}) — point_id={point_id}")
+
+        # 4. Cleanup staging file
+        staged_path.unlink(missing_ok=True)
+        try:
+            staged_path.parent.rmdir()
+        except OSError:
+            pass
+
     except Exception as exc:
-        print(f"[qdrant] ✗ Embedding failed for {file_path}: {exc}")
+        print(f"[r2] ✗ Embed/upload failed for {staged_path}: {exc}")
         traceback.print_exc()
 
 
@@ -303,6 +382,11 @@ def health():
 async def tag_audio(
     audio: UploadFile = File(...),
     isrc: str = Form(default=""),
+    title: str = Form(default=""),
+    artist: str = Form(default=""),
+    album: str = Form(default=""),
+    bpm: str = Form(default=""),
+    genre: str = Form(default=""),
     authorization: str = Header(default=None),
 ):
     """
@@ -311,6 +395,8 @@ async def tag_audio(
       - metadata.json
       - <stem>.csv
       - <stem>_tagged.<ext>
+    Optional form fields (title, artist, album, bpm, genre, isrc) override or
+    fill the corresponding pipeline-detected values before tagging.
     When an Authorization token is provided, the tagged audio is also
     persisted to user storage and embedded into Qdrant asynchronously.
     """
@@ -323,8 +409,23 @@ async def tag_audio(
             token = authorization.removeprefix("Bearer ").strip()
             user_id = await _resolve_user_id(token)
 
-        # Save upload
-        input_path = tmp_dir / (audio.filename or "input.wav")
+        # Save upload — preserve the original filename (and therefore extension)
+        # so write_id3_tags dispatches to the correct mutagen handler.
+        # Fall back to content_type sniffing so we never call _tag_wav on an MP3.
+        _MIME_EXT = {
+            "audio/wav": ".wav", "audio/wave": ".wav", "audio/x-wav": ".wav",
+            "audio/flac": ".flac", "audio/x-flac": ".flac",
+            "audio/mpeg": ".mp3", "audio/mp3": ".mp3",
+            "audio/aac": ".aac", "audio/x-aac": ".aac",
+            "audio/aiff": ".aiff", "audio/x-aiff": ".aiff",
+            "audio/ogg": ".ogg",
+        }
+        if audio.filename:
+            safe_name = audio.filename
+        else:
+            ext = _MIME_EXT.get((audio.content_type or "").lower(), ".wav")
+            safe_name = f"input{ext}"
+        input_path = tmp_dir / safe_name
         content = await audio.read()
         input_path.write_bytes(content)
 
@@ -332,17 +433,37 @@ async def tag_audio(
         tagger = _get_tagger()
         result = tagger.run(input_path)
 
-        # Inject ISRC if provided
-        isrc = (isrc or "").strip()
-        if isrc:
-            result.setdefault("llm", {}).setdefault("metadata", {})["ISRC"] = isrc
+        # Apply caller-supplied overrides into metadata (non-empty values win)
+        meta = result.setdefault("metadata", {})
+        if (v := (title or "").strip()):
+            meta["Title"] = v
+        if (v := (artist or "").strip()):
+            meta["Artist"] = v
+        if (v := (album or "").strip()):
+            meta["Album"] = v
+        if (v := (isrc or "").strip()):
+            meta["ISRC"] = v
+        if (v := (genre or "").strip()):
+            meta["Genre"] = v
+        if (v := (bpm or "").strip()):
+            try:
+                meta["BPM"] = int(float(v))
+            except ValueError:
+                pass
 
-        # Write ID3 tags onto the audio copy
-        from src.export import write_csv_sidecar, write_id3_tags
+        # Embed metadata into a tagged COPY via FFmpeg (-codec:a copy).
+        # Writing to a new file (not in-place) guarantees the original bytes
+        # are never at risk, and FFmpeg writes standard container metadata
+        # (RIFF LIST/INFO for WAV, ID3 for MP3, Vorbis for FLAC, etc.)
+        # so the result plays correctly in browsers and is visible in DAWs/OS.
+        from src.export import write_csv_sidecar, write_tags_ffmpeg
+        tagged_name = f"{input_path.stem}_tagged{input_path.suffix}"
+        tagged_path = tmp_dir / tagged_name
         try:
-            write_id3_tags(input_path, result)
+            write_tags_ffmpeg(input_path, tagged_path, result)
         except Exception as exc:
-            print(f"[api/tag] ID3 warning: {exc}")
+            print(f"[api/tag] ffmpeg tag warning: {exc} — falling back to original")
+            shutil.copy2(str(input_path), str(tagged_path))
 
         # Write CSV sidecar
         csv_path = tmp_dir / f"{input_path.stem}.csv"
@@ -355,9 +476,9 @@ async def tag_audio(
         # Persist tagged audio + schedule embedding if authenticated
         if user_id:
             job_id = str(_uuid.uuid4())
-            dest = _persist_file(user_id, "tag", job_id, input_path.name, input_path)
+            dest = _stage_file(user_id, "tag", job_id, tagged_path.name, tagged_path)
             asyncio.create_task(
-                _schedule_embed(dest, user_id, "tag", "tagged", audio.filename or "input.wav", job_id)
+                _schedule_embed(dest, user_id, "tag", "tagged", tagged_path.name, job_id)
             )
 
         # Pack into ZIP
@@ -365,8 +486,7 @@ async def tag_audio(
         with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
             zf.write(meta_path, arcname="metadata.json")
             zf.write(csv_path, arcname=csv_path.name)
-            tagged_name = f"{input_path.stem}_tagged{input_path.suffix}"
-            zf.write(input_path, arcname=tagged_name)
+            zf.write(tagged_path, arcname=tagged_name)
         buf.seek(0)
 
         filename = f"{input_path.stem}_synctag.zip"
@@ -426,7 +546,7 @@ async def separate_audio(
                 p = Path(filepath)
                 if p.exists():
                     subgroup = _stem_subgroup(stem_key)
-                    dest = _persist_file(user_id, "separate", job_id, f"{stem_key}.wav", p)
+                    dest = _stage_file(user_id, "separate", job_id, f"{stem_key}.wav", p)
                     asyncio.create_task(
                         _schedule_embed(
                             dest, user_id, "separate", subgroup,
@@ -494,7 +614,7 @@ async def cut_audio(
         # Persist + schedule embedding if authenticated
         if user_id:
             job_id = str(_uuid.uuid4())
-            dest = _persist_file(user_id, "cut", job_id, output_path.name, output_path)
+            dest = _stage_file(user_id, "cut", job_id, output_path.name, output_path)
             asyncio.create_task(
                 _schedule_embed(dest, user_id, "cut", "trimmed", audio.filename or "input.wav", job_id)
             )
@@ -569,7 +689,7 @@ async def join_audio(
         # Persist + schedule embedding if authenticated
         if user_id:
             job_id = str(_uuid.uuid4())
-            dest = _persist_file(user_id, "join", job_id, "joined.wav", output_path)
+            dest = _stage_file(user_id, "join", job_id, "joined.wav", output_path)
             original = ", ".join(f.filename or "input" for f in audio[:3])
             asyncio.create_task(
                 _schedule_embed(dest, user_id, "join", "joined", original, job_id)
@@ -608,6 +728,9 @@ async def karaoke_audio(
         if authorization:
             token = authorization.removeprefix("Bearer ").strip()
             user_id = await _resolve_user_id(token)
+        if not user_id and DEV_USER_ID:
+            print(f"[dev] No auth token — using DEV_USER_ID={DEV_USER_ID!r}")
+            user_id = DEV_USER_ID
 
         input_path = tmp_dir / (audio.filename or "input.wav")
         content = await audio.read()
@@ -638,7 +761,7 @@ async def karaoke_audio(
         # Persist + schedule embedding if authenticated
         if user_id:
             job_id = str(_uuid.uuid4())
-            dest = _persist_file(user_id, "karaoke", job_id, output_path.name, output_path)
+            dest = _stage_file(user_id, "karaoke", job_id, output_path.name, output_path)
             asyncio.create_task(
                 _schedule_embed(dest, user_id, "karaoke", "instrumental", audio.filename or "input.wav", job_id)
             )
@@ -660,9 +783,13 @@ async def karaoke_audio(
 # ---------------------------------------------------------------------------
 
 _FORMAT_MAP = {
-    "mp3":  {"ext": ".mp3",  "codec": "libmp3lame", "mime": "audio/mpeg"},
-    "wav":  {"ext": ".wav",  "codec": "pcm_s16le",  "mime": "audio/wav"},
-    "flac": {"ext": ".flac", "codec": "flac",       "mime": "audio/flac"},
+    "mp3":  {"ext": ".mp3",  "codec": "libmp3lame", "mime": "audio/mpeg",    "extra": ["-q:a", "2"]},
+    "wav":  {"ext": ".wav",  "codec": "pcm_s16le",  "mime": "audio/wav",     "extra": []},
+    "flac": {"ext": ".flac", "codec": "flac",       "mime": "audio/flac",    "extra": []},
+    "aiff": {"ext": ".aiff", "codec": "pcm_s16be",  "mime": "audio/aiff",    "extra": []},
+    "aac":  {"ext": ".aac",  "codec": "aac",        "mime": "audio/aac",     "extra": ["-b:a", "256k"]},
+    "m4a":  {"ext": ".m4a",  "codec": "aac",        "mime": "audio/mp4",     "extra": ["-b:a", "256k", "-movflags", "+faststart"]},
+    "ogg":  {"ext": ".ogg",  "codec": "libvorbis",  "mime": "audio/ogg",     "extra": ["-q:a", "6"]},
 }
 
 @app.post("/api/convert")
@@ -688,13 +815,13 @@ async def convert_audio(
         content = await audio.read()
         input_path.write_bytes(content)
 
-        output_name = f"{input_path.stem}_converted{spec['ext']}"
+        # M4A needs an mp4 container — use a distinct output name
+        out_stem = input_path.stem
+        output_name = f"{out_stem}_converted{spec['ext']}"
         output_path = tmp_dir / output_name
 
         cmd = ["ffmpeg", "-y", "-i", str(input_path), "-c:a", spec["codec"]]
-        if fmt == "mp3":
-            cmd += ["-q:a", "2"]  # high quality VBR
-
+        cmd += spec["extra"]
         cmd.append(str(output_path))
 
         subprocess.run(cmd, capture_output=True, check=True)
@@ -702,7 +829,7 @@ async def convert_audio(
         # Persist + schedule embedding if authenticated
         if user_id:
             job_id = str(_uuid.uuid4())
-            dest = _persist_file(user_id, "convert", job_id, output_path.name, output_path)
+            dest = _stage_file(user_id, "convert", job_id, output_path.name, output_path)
             asyncio.create_task(
                 _schedule_embed(dest, user_id, "convert", "converted", audio.filename or "input.wav", job_id)
             )
@@ -1064,7 +1191,7 @@ async def analyze_audio(
         # Persist original + schedule embedding if authenticated
         if user_id:
             job_id = str(_uuid.uuid4())
-            dest = _persist_file(user_id, "analyze", job_id, input_path.name, input_path)
+            dest = _stage_file(user_id, "analyze", job_id, input_path.name, input_path)
             extra = {
                 k: result[k] for k in (
                     "bpm", "key", "key_confidence", "key_source", "tempo_category",
@@ -1131,6 +1258,53 @@ async def list_files(authorization: str = Header(default=None)):
 
 
 # ---------------------------------------------------------------------------
+# POST /api/files/upload — Bulk upload files into the user's graph (premium)
+# ---------------------------------------------------------------------------
+
+@app.post("/api/files/upload")
+async def upload_files_to_graph(
+    audio: List[UploadFile] = File(...),
+    authorization: str = Header(default=None),
+):
+    """
+    Accept one or more audio files, persist them, and embed each into the
+    user's Qdrant graph via the background thread pool.
+
+    Requires a premium subscription. Returns immediately with the number of
+    files queued for embedding.
+    """
+    if not authorization:
+        raise HTTPException(status_code=401, detail="Authorization required")
+
+    token = authorization.removeprefix("Bearer ").strip()
+    profile = await _require_premium_profile(token)
+    user_id = profile["clerk_id"]
+
+    job_id = str(_uuid.uuid4())
+    queued = 0
+
+    for upload in audio:
+        tmp_dir = Path(tempfile.mkdtemp(prefix="api_upload_"))
+        try:
+            fname = upload.filename or f"upload_{queued}.wav"
+            input_path = tmp_dir / fname
+            content = await upload.read()
+            input_path.write_bytes(content)
+
+            dest = _stage_file(user_id, "upload", job_id, fname, input_path)
+            await _schedule_embed(
+                dest, user_id, "upload", "uploaded", fname, job_id,
+            )
+            queued += 1
+        except Exception as exc:
+            print(f"[upload] Failed to queue {upload.filename}: {exc}")
+        finally:
+            shutil.rmtree(tmp_dir, ignore_errors=True)
+
+    return JSONResponse({"queued": queued, "job_id": job_id})
+
+
+# ---------------------------------------------------------------------------
 # GET /api/files/{point_id}/audio — Serve a persisted audio file
 # ---------------------------------------------------------------------------
 
@@ -1140,13 +1314,14 @@ async def get_file_audio(point_id: str, authorization: str = Header(default=None
     Serve the audio file associated with the given Qdrant point ID.
     Validates that the authenticated user owns the file.
     """
-    if not authorization:
-        raise HTTPException(status_code=401, detail="Authorization required")
-
-    token = authorization.removeprefix("Bearer ").strip()
-    user_id = await _resolve_user_id(token)
+    user_id = None
+    if authorization:
+        token = authorization.removeprefix("Bearer ").strip()
+        user_id = await _resolve_user_id(token)
+    if not user_id and DEV_USER_ID:
+        user_id = DEV_USER_ID
     if not user_id:
-        raise HTTPException(status_code=401, detail="Invalid or expired token")
+        raise HTTPException(status_code=401, detail="Authorization required")
 
     try:
         qdrant = _get_qdrant()
@@ -1165,21 +1340,53 @@ async def get_file_audio(point_id: str, authorization: str = Header(default=None
     if payload.get("user_id") != user_id:
         raise HTTPException(status_code=403, detail="Access denied")
 
-    file_path = Path(payload["file_path"])
-    if not file_path.exists():
-        raise HTTPException(status_code=404, detail="Audio file not found on disk")
+    r2_key = payload.get("r2_key")
+    if not r2_key:
+        raise HTTPException(status_code=404, detail="No R2 key in record — file predates R2 migration")
 
-    # Guess MIME type from extension
-    ext = file_path.suffix.lower()
-    mime = {"mp3": "audio/mpeg", "flac": "audio/flac"}.get(ext.lstrip("."), "audio/wav")
+    # Determine Content-Type from file extension
+    ext = r2_key.rsplit(".", 1)[-1].lower() if "." in r2_key else ""
+    mime_map = {
+        "mp3":  "audio/mpeg",
+        "wav":  "audio/wav",
+        "flac": "audio/flac",
+        "ogg":  "audio/ogg",
+        "m4a":  "audio/mp4",
+        "aac":  "audio/aac",
+        "aif":  "audio/aiff",
+        "aiff": "audio/aiff",
+    }
+    content_type = mime_map.get(ext, "audio/wav")
+
+    try:
+        s3 = _get_s3_upload()
+        obj = await asyncio.get_event_loop().run_in_executor(
+            None,
+            lambda: s3.get_object(Bucket=R2_BUCKET_NAME, Key=r2_key),
+        )
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Failed to fetch audio from storage: {exc}") from exc
+
+    body = obj["Body"]
+    content_length = obj.get("ContentLength")
+
+    def _iter_chunks():
+        while True:
+            chunk = body.read(65536)
+            if not chunk:
+                break
+            yield chunk
+
+    headers = {}
+    if content_length:
+        headers["Content-Length"] = str(content_length)
+    headers["Accept-Ranges"] = "bytes"
+    headers["Cache-Control"] = "no-store"
 
     return StreamingResponse(
-        io.BytesIO(file_path.read_bytes()),
-        media_type=mime,
-        headers={
-            "Content-Disposition": f'inline; filename="{file_path.name}"',
-            "Accept-Ranges": "bytes",
-        },
+        _iter_chunks(),
+        media_type=content_type,
+        headers=headers,
     )
 
 
@@ -1216,7 +1423,7 @@ async def search_files(
     audio: Optional[UploadFile] = File(default=None),
     query_text: str = Form(default=""),
     offset: int = Form(default=0),
-    limit: int = Form(default=5),
+    limit: int = Form(default=10),
     authorization: str = Header(default=None),
 ):
     """
