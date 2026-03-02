@@ -1,0 +1,65 @@
+ui/src/App.jsx
+  10e9dba56839bb81 1-2,18-107,174
+ui/src/components/SubscriptionModal.jsx
+  10e9dba56839bb81 36,48-54,141-144,150
+auth/main.py
+  10e9dba56839bb81 137,146,150,367,370,383-411,501,510-511,517,533-642
+  12abd1ade74758d1 54-55,57-69,72,74,104-106,114-121,123,155,163,165-166,168,355-356,412-418,437-443,459-465,481-487
+REVIEW.md
+  12abd1ade74758d1 972-978,982-985
+  bdeca089487d037c 971
+tests/test_api_e2e.py
+  bdeca089487d037c 278-311
+api/main.py
+  12abd1ade74758d1 66-67,72-73,102-117,444-511,574,624,683,695,754,772,819,851,896,924,980,997,1248,1358,1366,1415-1416,1454,1464,1534-1535,1546,1548,1560,1642,1684-1773,1790-1792,1802-1819,1821,1823,1826-1828,1830-1831,1833-1849,1851,1854-1855
+  bdeca089487d037c 28,127-132,136-139,147-150,173-176,191-194,215-216
+database/init.sql
+  12abd1ade74758d1 26-48
+  10e9dba56839bb81 23
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.1.4",
+  "base_commit_sha": "d51e05e59431691b1297e098de9d3e334d8c8f57",
+  "prompts": {
+    "10e9dba56839bb81": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "0bdc0a27-90d8-4023-8eaf-f2a7abfe30fd",
+        "model": "claude-sonnet-4-6"
+      },
+      "human_author": "Derek Wingard <derekwingard@gmail.com>",
+      "messages": [],
+      "total_additions": 273,
+      "total_deletions": 33,
+      "accepted_lines": 255,
+      "overriden_lines": 0
+    },
+    "12abd1ade74758d1": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "1483b72e-0341-493b-bc75-12ab29c68408",
+        "model": "claude-sonnet-4-6"
+      },
+      "human_author": "Derek Wingard <derekwingard@gmail.com>",
+      "messages": [],
+      "total_additions": 367,
+      "total_deletions": 127,
+      "accepted_lines": 366,
+      "overriden_lines": 0
+    },
+    "bdeca089487d037c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "31fddc19-69e0-48a2-98ea-174c3f413b2a",
+        "model": "claude-sonnet-4-6"
+      },
+      "human_author": "Derek Wingard <derekwingard@gmail.com>",
+      "messages": [],
+      "total_additions": 108,
+      "total_deletions": 54,
+      "accepted_lines": 63,
+      "overriden_lines": 0
+    }
+  }
+}
