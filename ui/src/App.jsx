@@ -1,5 +1,5 @@
-import { useEffect } from 'react';
-import { BrowserRouter as Router, Routes, Route, NavLink, Navigate } from 'react-router-dom';
+import { useEffect, useState } from 'react';
+import { BrowserRouter as Router, Routes, Route, NavLink, Navigate, useSearchParams, useNavigate, Link } from 'react-router-dom';
 import { useUser, useAuth } from '@clerk/clerk-react';
 import { AuthProvider, useAuthContext } from './AuthContext.jsx';
 import SignInModal from './components/SignInModal.jsx';
@@ -14,6 +14,96 @@ import KaraokeTab from './components/KaraokeTab.jsx';
 import FormatConverterTab from './components/FormatConverterTab.jsx';
 import AudioAnalyzerTab from './components/AudioAnalyzerTab.jsx';
 import MyFilesTab from './components/MyFilesTab.jsx';
+
+// ── CheckoutReturn ─────────────────────────────────────────────────────────
+// Rendered at /checkout?session_id=... after Stripe redirects back.
+// Calls /auth/billing/sync to verify payment and update the profile in context.
+function CheckoutReturn() {
+    const [searchParams] = useSearchParams();
+    const { getToken, isSignedIn } = useAuth();
+    const { setProfile } = useAuthContext();
+    const navigate = useNavigate();
+    const [status, setStatus] = useState('verifying'); // 'verifying' | 'success' | 'error'
+    const [message, setMessage] = useState('');
+
+    const sessionId = searchParams.get('session_id');
+
+    useEffect(() => {
+        if (!sessionId) {
+            navigate('/synctag', { replace: true });
+            return;
+        }
+        // Wait until Clerk has loaded auth state before attempting the token fetch
+        if (!isSignedIn) return;
+
+        let cancelled = false;
+        (async () => {
+            try {
+                const token = await getToken();
+                const resp = await fetch('/auth/billing/sync', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        Authorization: `Bearer ${token}`,
+                    },
+                    body: JSON.stringify({ session_id: sessionId }),
+                });
+                if (cancelled) return;
+                if (!resp.ok) {
+                    const err = await resp.json().catch(() => ({ detail: `HTTP ${resp.status}` }));
+                    throw new Error(err.detail || `HTTP ${resp.status}`);
+                }
+                const updatedProfile = await resp.json();
+                if (cancelled) return;
+                setProfile(updatedProfile);
+                setStatus('success');
+                setTimeout(() => {
+                    if (!cancelled) navigate('/synctag', { replace: true });
+                }, 1500);
+            } catch (e) {
+                if (!cancelled) {
+                    setStatus('error');
+                    setMessage(e.message);
+                }
+            }
+        })();
+
+        return () => { cancelled = true; };
+    }, [sessionId, isSignedIn, getToken, setProfile, navigate]);
+
+    const cardStyle = {
+        display: 'flex',
+        flexDirection: 'column',
+        alignItems: 'center',
+        justifyContent: 'center',
+        minHeight: '60vh',
+        gap: '1rem',
+        textAlign: 'center',
+    };
+
+    if (status === 'success') {
+        return (
+            <div style={cardStyle}>
+                <p style={{ fontSize: '1.5rem', color: '#16a34a' }}>Subscription activated!</p>
+            </div>
+        );
+    }
+    if (status === 'error') {
+        return (
+            <div style={cardStyle}>
+                <p style={{ color: '#dc2626' }}>{message}</p>
+                <Link to="/synctag">← Back</Link>
+            </div>
+        );
+    }
+    return (
+        <div style={cardStyle}>
+            <p style={{ fontSize: '1.1rem', color: 'var(--text-secondary)' }}>
+                Verifying your subscription…
+            </p>
+        </div>
+    );
+}
 
 const ROUTES = [
     { id: 'synctag', path: '/synctag', label: 'SyncTag' },
@@ -81,6 +171,7 @@ function AppInner() {
                 <main className="main-content">
                     <Routes>
                         <Route path="/" element={<Navigate to="/synctag" replace />} />
+                        <Route path="/checkout" element={<CheckoutReturn />} />
                         <Route path="/synctag" element={<SyncTagTab />} />
                         <Route path="/separator" element={<StemSeparatorTab />} />
                         <Route path="/vocal-remover" element={<KaraokeTab />} />

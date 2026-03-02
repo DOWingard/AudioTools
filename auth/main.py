@@ -9,7 +9,6 @@ from typing import Optional
 import asyncpg
 import httpx
 import pytz
-import requests
 import stripe
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
@@ -52,15 +51,27 @@ def _clerk_fapi_url() -> str:
     raise RuntimeError("VITE_CLERK_PUBLISHABLE_KEY not set or unrecognised format")
 
 _jwks_cache: Optional[dict] = None
+_jwks_fetched_at: float = 0.0
+JWKS_TTL = 3600  # 1 hour
+
+
+async def _refresh_jwks() -> dict:
+    """Fetch Clerk JWKS via async httpx and update the in-process cache."""
+    global _jwks_cache, _jwks_fetched_at
+    url = f"{_clerk_fapi_url()}/.well-known/jwks.json"
+    async with httpx.AsyncClient() as client:
+        resp = await client.get(url, timeout=10)
+        resp.raise_for_status()
+    _jwks_cache = resp.json()
+    _jwks_fetched_at = time.monotonic()
+    log.info("Refreshed Clerk JWKS from %s (%d keys)", url, len(_jwks_cache.get("keys", [])))
+    return _jwks_cache
+
 
 def _get_jwks() -> dict:
-    global _jwks_cache
+    """Return the cached JWKS. Must be pre-warmed via _refresh_jwks() at startup."""
     if _jwks_cache is None:
-        url = f"{_clerk_fapi_url()}/.well-known/jwks.json"
-        resp = requests.get(url, timeout=10)
-        resp.raise_for_status()
-        _jwks_cache = resp.json()
-        log.info("Loaded Clerk JWKS from %s (%d keys)", url, len(_jwks_cache.get("keys", [])))
+        raise RuntimeError("JWKS not loaded — call _refresh_jwks() at startup")
     return _jwks_cache
 
 # ── DB pool + scheduler ───────────────────────────────────────────────────────
@@ -90,6 +101,9 @@ async def lifespan(app: FastAPI):
     db_pool = await asyncpg.create_pool(DATABASE_URL, min_size=2, max_size=10)
     log.info("DB pool created")
 
+    # Pre-warm Clerk JWKS so no request ever blocks on the initial fetch
+    await _refresh_jwks()
+
     # Reset free-tier quota every day at 04:00 PST
     scheduler.add_job(
         _reset_daily_downloads,
@@ -97,8 +111,16 @@ async def lifespan(app: FastAPI):
         id="daily_reset",
         replace_existing=True,
     )
+    # Refresh JWKS every hour (Clerk rotates signing keys periodically)
+    scheduler.add_job(
+        _refresh_jwks,
+        "interval",
+        hours=1,
+        id="jwks_refresh",
+        replace_existing=True,
+    )
     scheduler.start()
-    log.info("Scheduler started — daily quota reset at 04:00 PST")
+    log.info("Scheduler started — daily quota reset at 04:00 PST, JWKS refresh every 1h")
 
     yield
 
@@ -112,6 +134,7 @@ app = FastAPI(lifespan=lifespan)
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
 async def get_or_create_user(clerk_id: str, email: str) -> asyncpg.Record:
+    email_val = email.strip().lower() if email and email.strip() else None
     async with db_pool.acquire() as conn:
         row = await conn.fetchrow("SELECT * FROM users WHERE clerk_id = $1", clerk_id)
         if row:
@@ -120,16 +143,16 @@ async def get_or_create_user(clerk_id: str, email: str) -> asyncpg.Record:
             """
             INSERT INTO users (clerk_id, email)
             VALUES ($1, $2)
-            ON CONFLICT (clerk_id) DO UPDATE SET email = EXCLUDED.email
+            ON CONFLICT (clerk_id) DO UPDATE SET email = COALESCE(EXCLUDED.email, users.email)
             RETURNING *
             """,
             clerk_id,
-            email,
+            email_val,
         )
         return row
 
 
-def verify_clerk_token(authorization: str) -> dict:
+async def verify_clerk_token(authorization: str) -> dict:
     if not authorization.startswith("Bearer "):
         raise HTTPException(status_code=401, detail="Invalid authorization header")
     token = authorization.removeprefix("Bearer ").strip()
@@ -137,12 +160,12 @@ def verify_clerk_token(authorization: str) -> dict:
         payload = jwt.decode(token, _get_jwks(), algorithms=["RS256"], options={"verify_aud": False})
         return payload
     except JWTError as exc:
-        global _jwks_cache
-        _jwks_cache = None
+        # Stale key — force a JWKS refresh and retry once
         try:
-            return jwt.decode(token, _get_jwks(), algorithms=["RS256"], options={"verify_aud": False})
+            fresh_jwks = await _refresh_jwks()
+            return jwt.decode(token, fresh_jwks, algorithms=["RS256"], options={"verify_aud": False})
         except JWTError:
-            raise HTTPException(status_code=401, detail=f"Invalid or expired token: {exc}")
+            raise HTTPException(status_code=401, detail="Invalid or expired token")
 
 
 def _row_to_profile(row: asyncpg.Record) -> dict:
@@ -187,7 +210,7 @@ async def health():
 
 @app.get("/auth/user/me")
 async def get_me(authorization: str = Header(...)):
-    token_data = verify_clerk_token(authorization)
+    token_data = await verify_clerk_token(authorization)
     clerk_id = token_data.get("sub") or token_data.get("user_id")
     email = (token_data.get("email") or "").lower()
     if not clerk_id:
@@ -211,7 +234,7 @@ async def consume_usage(authorization: str = Header(...)):
     Returns { allowed: bool, remaining: int | null }.
     Subscribed users always get allowed=true without decrementing.
     """
-    token_data = verify_clerk_token(authorization)
+    token_data = await verify_clerk_token(authorization)
     clerk_id = token_data.get("sub") or token_data.get("user_id")
     if not clerk_id:
         raise HTTPException(status_code=401, detail="Cannot determine clerk_id")
@@ -329,6 +352,8 @@ async def stripe_webhook(request: Request, stripe_signature: str = Header(None))
     obj = event["data"]["object"]
     event_type = event["type"]
 
+    raw_event_id = event.get("id", "")
+
     if event_type in ("customer.subscription.created", "customer.subscription.updated"):
         stripe_customer_id = obj.get("customer")
         subscription_id    = obj.get("id")
@@ -339,10 +364,11 @@ async def stripe_webhook(request: Request, stripe_signature: str = Header(None))
         sub_type             = _map_price_to_type(price_id)
 
         async with db_pool.acquire() as conn:
-            await conn.execute(
+            result = await conn.execute(
                 """
                 UPDATE users
-                SET subscription_active    = $1,
+                SET stripe_id              = COALESCE(stripe_id, $5),
+                    subscription_active    = $1,
                     subscription_type      = $2,
                     subscription_status    = $3,
                     stripe_subscription_id = $4,
@@ -353,6 +379,43 @@ async def stripe_webhook(request: Request, stripe_signature: str = Header(None))
                 WHERE stripe_id = $5
                 """,
                 active, sub_type, local_status, subscription_id, stripe_customer_id,
+            )
+
+            # Fallback: if stripe_id wasn't in the DB yet, resolve via Stripe customer metadata
+            if result == "UPDATE 0":
+                try:
+                    customer = stripe.Customer.retrieve(stripe_customer_id)
+                    clerk_id_meta = (customer.get("metadata") or {}).get("clerk_id", "")
+                    if clerk_id_meta:
+                        result = await conn.execute(
+                            """
+                            UPDATE users
+                            SET stripe_id              = $1,
+                                subscription_active    = $2,
+                                subscription_type      = $3,
+                                subscription_status    = $4,
+                                stripe_subscription_id = $5,
+                                subscribed_at          = CASE
+                                                           WHEN $2 AND subscribed_at IS NULL THEN NOW()
+                                                           ELSE subscribed_at
+                                                         END
+                            WHERE clerk_id = $6
+                            """,
+                            stripe_customer_id, active, sub_type, local_status, subscription_id, clerk_id_meta,
+                        )
+                        log.info("webhook fallback via metadata: clerk_id=%s customer=%s", clerk_id_meta, stripe_customer_id)
+                    else:
+                        log.warning("webhook: no DB row and no clerk_id metadata for customer=%s", stripe_customer_id)
+                except stripe.StripeError as exc:
+                    log.error("webhook fallback customer.retrieve failed for %s: %s", stripe_customer_id, exc)
+
+            await conn.execute(
+                """
+                INSERT INTO subscription_events
+                    (clerk_id, stripe_id, event_type, stripe_status, local_status, sub_type, raw_event_id)
+                SELECT clerk_id, $1, $2, $3, $4, $5, $6 FROM users WHERE stripe_id = $1
+                """,
+                stripe_customer_id, event_type, stripe_status, local_status, sub_type, raw_event_id,
             )
         log.info("stripe %s sub=%s status=%s→%s active=%s type=%s",
                  event_type, subscription_id, stripe_status, local_status, active, sub_type)
@@ -371,6 +434,14 @@ async def stripe_webhook(request: Request, stripe_signature: str = Header(None))
                 """,
                 stripe_customer_id,
             )
+            await conn.execute(
+                """
+                INSERT INTO subscription_events
+                    (clerk_id, stripe_id, event_type, stripe_status, local_status, sub_type, raw_event_id)
+                SELECT clerk_id, $1, $2, 'deleted', 'cancelled', 'free', $3 FROM users WHERE stripe_id = $1
+                """,
+                stripe_customer_id, event_type, raw_event_id,
+            )
         log.info("stripe subscription.deleted for customer %s → cancelled", stripe_customer_id)
 
     elif event_type == "invoice.payment_failed":
@@ -384,6 +455,14 @@ async def stripe_webhook(request: Request, stripe_signature: str = Header(None))
                 WHERE stripe_id = $1
                 """,
                 stripe_customer_id,
+            )
+            await conn.execute(
+                """
+                INSERT INTO subscription_events
+                    (clerk_id, stripe_id, event_type, stripe_status, local_status, raw_event_id)
+                SELECT clerk_id, $1, $2, 'payment_failed', 'past_due', $3 FROM users WHERE stripe_id = $1
+                """,
+                stripe_customer_id, event_type, raw_event_id,
             )
         log.warning("invoice.payment_failed for customer %s — access suspended", stripe_customer_id)
 
@@ -399,6 +478,14 @@ async def stripe_webhook(request: Request, stripe_signature: str = Header(None))
                 """,
                 stripe_customer_id,
             )
+            await conn.execute(
+                """
+                INSERT INTO subscription_events
+                    (clerk_id, stripe_id, event_type, stripe_status, local_status, raw_event_id)
+                SELECT clerk_id, $1, $2, 'payment_succeeded', 'active', $3 FROM users WHERE stripe_id = $1
+                """,
+                stripe_customer_id, event_type, raw_event_id,
+            )
         log.info("invoice.payment_succeeded for customer %s — access restored", stripe_customer_id)
 
     return Response(status_code=200)
@@ -409,8 +496,9 @@ async def create_checkout(request: Request, authorization: str = Header(...)):
     if not STRIPE_SECRET_KEY:
         raise HTTPException(status_code=500, detail="Stripe not configured")
 
-    token_data = verify_clerk_token(authorization)
+    token_data = await verify_clerk_token(authorization)
     clerk_id = token_data.get("sub") or token_data.get("user_id")
+    email = (token_data.get("email") or "").lower()
 
     body = await request.json()
     plan = body.get("plan", "standard")
@@ -419,16 +507,14 @@ async def create_checkout(request: Request, authorization: str = Header(...)):
     if not price_id:
         raise HTTPException(status_code=500, detail=f"No Stripe price configured for plan '{plan}'")
 
-    async with db_pool.acquire() as conn:
-        row = await conn.fetchrow("SELECT stripe_id FROM users WHERE clerk_id = $1", clerk_id)
-    if not row:
-        raise HTTPException(status_code=404, detail="User not found")
+    # Upsert: Clerk webhook may not have fired yet when the user reaches checkout
+    row = await get_or_create_user(clerk_id, email)
 
     session_kwargs = dict(
         mode="subscription",
         line_items=[{"price": price_id, "quantity": 1}],
         ui_mode="embedded",
-        return_url=f"{APP_URL}/?checkout=complete&session_id={{CHECKOUT_SESSION_ID}}",
+        return_url=f"{APP_URL}/checkout?session_id={{CHECKOUT_SESSION_ID}}",
     )
     if row["stripe_id"]:
         session_kwargs["customer"] = row["stripe_id"]
@@ -444,12 +530,122 @@ async def create_checkout(request: Request, authorization: str = Header(...)):
     return {"client_secret": session.client_secret}
 
 
+@app.post("/auth/billing/sync")
+async def sync_billing(request: Request, authorization: str = Header(...)):
+    """
+    Called by the frontend after Stripe redirects back to /checkout?session_id=...
+    Retrieves the checkout session from Stripe, verifies ownership, and syncs
+    subscription state to the DB. Returns the updated user profile.
+
+    This is the synchronous confirmation path — webhooks remain the source of
+    truth for all subsequent lifecycle events (renewals, cancellations, failures).
+    """
+    if not STRIPE_SECRET_KEY:
+        raise HTTPException(status_code=500, detail="Stripe not configured")
+
+    token_data = await verify_clerk_token(authorization)
+    clerk_id = token_data.get("sub") or token_data.get("user_id")
+    email = (token_data.get("email") or "").lower()
+    if not clerk_id:
+        raise HTTPException(status_code=401, detail="Cannot determine clerk_id from token")
+
+    body = await request.json()
+    session_id = body.get("session_id", "").strip()
+    if not session_id:
+        raise HTTPException(status_code=400, detail="session_id is required")
+
+    # Retrieve session from Stripe with subscription expanded inline
+    try:
+        session = stripe.checkout.Session.retrieve(session_id, expand=["subscription"])
+    except stripe.StripeError as exc:
+        log.error("Stripe session retrieve failed for session=%s: %s", session_id, exc)
+        raise HTTPException(status_code=400, detail="Invalid or expired session_id")
+
+    # Session must be fully complete with confirmed payment
+    if session.status != "complete":
+        raise HTTPException(status_code=400, detail="Checkout session is not complete")
+    if session.payment_status != "paid":
+        raise HTTPException(status_code=400, detail="Payment has not been confirmed")
+
+    session_customer = session.customer  # Stripe customer ID string
+
+    # Upsert user row — handles the case where the Clerk webhook hasn't fired yet
+    row = await get_or_create_user(clerk_id, email)
+
+    # Verify session ownership: if we already have a stripe_id it must match
+    if row["stripe_id"] and row["stripe_id"] != session_customer:
+        log.warning(
+            "Ownership mismatch: clerk_id=%s db_stripe_id=%s session_customer=%s",
+            clerk_id, row["stripe_id"], session_customer,
+        )
+        raise HTTPException(status_code=403, detail="Session does not belong to this account")
+
+    # Extract subscription data from the expanded Subscription object
+    subscription = session.subscription
+    stripe_subscription_id = subscription.id
+    stripe_status = subscription.status
+    price_id = (
+        subscription.items.data[0].price.id
+        if subscription.items and subscription.items.data
+        else ""
+    )
+
+    local_status, active = _map_stripe_status(stripe_status)
+    sub_type = _map_price_to_type(price_id)
+
+    async with db_pool.acquire() as conn:
+        updated_row = await conn.fetchrow(
+            """
+            UPDATE users
+            SET stripe_id              = COALESCE(stripe_id, $1),
+                stripe_subscription_id = $2,
+                subscription_active    = $3,
+                subscription_type      = $4,
+                subscription_status    = $5,
+                subscribed_at          = CASE
+                                           WHEN $3 AND subscribed_at IS NULL THEN NOW()
+                                           ELSE subscribed_at
+                                         END
+            WHERE clerk_id = $6
+            RETURNING *
+            """,
+            session_customer,
+            stripe_subscription_id,
+            active,
+            sub_type,
+            local_status,
+            clerk_id,
+        )
+        if not updated_row:
+            raise HTTPException(status_code=404, detail="User not found")
+
+        await conn.execute(
+            """
+            INSERT INTO subscription_events
+                (clerk_id, stripe_id, event_type, stripe_status, local_status, sub_type, raw_event_id)
+            VALUES ($1, $2, $3, $4, $5, $6, $7)
+            """,
+            clerk_id, session_customer,
+            "checkout.session.completed",
+            stripe_status, local_status, sub_type,
+            session_id,
+        )
+
+    log.info(
+        "billing/sync: clerk_id=%s session=%s sub=%s stripe_status=%s→%s active=%s type=%s",
+        clerk_id, session_id, stripe_subscription_id,
+        stripe_status, local_status, active, sub_type,
+    )
+
+    return _row_to_profile(updated_row)
+
+
 @app.post("/auth/billing/portal")
 async def create_portal(authorization: str = Header(...)):
     if not STRIPE_SECRET_KEY:
         raise HTTPException(status_code=500, detail="Stripe not configured")
 
-    token_data = verify_clerk_token(authorization)
+    token_data = await verify_clerk_token(authorization)
     clerk_id = token_data.get("sub") or token_data.get("user_id")
 
     async with db_pool.acquire() as conn:

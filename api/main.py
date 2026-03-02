@@ -25,6 +25,7 @@ import os
 import shutil
 import subprocess
 import tempfile
+import threading
 import uuid as _uuid
 import zipfile
 from concurrent.futures import ThreadPoolExecutor
@@ -62,11 +63,14 @@ INTERNAL_SECRET        = os.environ.get("INTERNAL_SECRET", "")
 MAX_UPLOAD_BYTES = 250 * 1024 * 1024  # 250 MB
 
 # Staging dir: files live here between the HTTP handler and the background embed+upload task
-STAGING_DIR = Path(os.environ.get("STAGING_DIR", "/tmp/syntag_staging"))
-STAGING_DIR.mkdir(parents=True, exist_ok=True)
+STAGING_DIR = Path(os.environ.get("STAGING_DIR", "/var/lib/syntag/staging"))
+STAGING_DIR.mkdir(parents=True, exist_ok=True, mode=0o700)
 
 # Thread pool for CPU-heavy background embedding (separate from FastAPI async workers)
 _embed_pool = ThreadPoolExecutor(max_workers=2, thread_name_prefix="embed")
+
+# Thread pool for O(n²) graph computation (keeps async event loop unblocked)
+_graph_pool = ThreadPoolExecutor(max_workers=1, thread_name_prefix="graph")
 
 ALLOWED_ORIGINS = [
     o.strip()
@@ -95,6 +99,22 @@ class MaxBodySizeMiddleware(BaseHTTPMiddleware):
 
 app.add_middleware(MaxBodySizeMiddleware)
 
+
+import time as _time  # noqa: E402
+
+
+@app.on_event("startup")
+async def _startup():
+    """Sweep staging dir for orphaned files older than 1 hour."""
+    cutoff = _time.time() - 3600
+    try:
+        for f in STAGING_DIR.rglob("*"):
+            if f.is_file() and f.stat().st_mtime < cutoff:
+                f.unlink(missing_ok=True)
+    except Exception as exc:
+        log.warning("Startup staging cleanup failed: %s", exc)
+
+
 # ---------------------------------------------------------------------------
 # Lazy-init singletons — ML models and S3 clients load once on first request
 # ---------------------------------------------------------------------------
@@ -104,20 +124,32 @@ _qdrant   = None
 _s3_upload  = None   # boto3 client for PUT (internal endpoint)
 _s3_presign = None   # boto3 client for presigned GET (public endpoint)
 
+_tagger_lock    = threading.Lock()
+_embedder_lock  = threading.Lock()
+_qdrant_lock    = threading.Lock()
+_s3_upload_lock  = threading.Lock()
+_s3_presign_lock = threading.Lock()
+
 
 def _get_tagger():
     global _tagger
-    if _tagger is None:
-        from src.synctag import SyncTagger
-        _tagger = SyncTagger()
+    if _tagger is not None:
+        return _tagger
+    with _tagger_lock:
+        if _tagger is None:
+            from src.synctag import SyncTagger
+            _tagger = SyncTagger()
     return _tagger
 
 
 def _get_embedder():
     global _embedder
-    if _embedder is None:
-        from src.embedder import AudioEmbedder
-        _embedder = AudioEmbedder()
+    if _embedder is not None:
+        return _embedder
+    with _embedder_lock:
+        if _embedder is None:
+            from src.embedder import AudioEmbedder
+            _embedder = AudioEmbedder()
     return _embedder
 
 
@@ -138,30 +170,36 @@ def _s3_public_endpoint() -> str:
 def _get_s3_upload():
     """boto3 client for uploading objects (uses internal endpoint)."""
     global _s3_upload
-    if _s3_upload is None:
-        import boto3
-        _s3_upload = boto3.client(
-            "s3",
-            endpoint_url=_s3_internal_endpoint(),
-            aws_access_key_id=R2_ACCESS_KEY_ID,
-            aws_secret_access_key=R2_SECRET_ACCESS_KEY,
-            region_name="auto",
-        )
+    if _s3_upload is not None:
+        return _s3_upload
+    with _s3_upload_lock:
+        if _s3_upload is None:
+            import boto3
+            _s3_upload = boto3.client(
+                "s3",
+                endpoint_url=_s3_internal_endpoint(),
+                aws_access_key_id=R2_ACCESS_KEY_ID,
+                aws_secret_access_key=R2_SECRET_ACCESS_KEY,
+                region_name="auto",
+            )
     return _s3_upload
 
 
 def _get_s3_presign():
     """boto3 client for generating presigned URLs (uses public endpoint)."""
     global _s3_presign
-    if _s3_presign is None:
-        import boto3
-        _s3_presign = boto3.client(
-            "s3",
-            endpoint_url=_s3_public_endpoint(),
-            aws_access_key_id=R2_ACCESS_KEY_ID,
-            aws_secret_access_key=R2_SECRET_ACCESS_KEY,
-            region_name="auto",
-        )
+    if _s3_presign is not None:
+        return _s3_presign
+    with _s3_presign_lock:
+        if _s3_presign is None:
+            import boto3
+            _s3_presign = boto3.client(
+                "s3",
+                endpoint_url=_s3_public_endpoint(),
+                aws_access_key_id=R2_ACCESS_KEY_ID,
+                aws_secret_access_key=R2_SECRET_ACCESS_KEY,
+                region_name="auto",
+            )
     return _s3_presign
 
 
@@ -174,33 +212,34 @@ def _get_qdrant():
     global _qdrant
     if _qdrant is not None:
         return _qdrant
+    with _qdrant_lock:
+        if _qdrant is None:
+            from qdrant_client import QdrantClient
+            from qdrant_client.models import (
+                Distance,
+                PayloadSchemaType,
+                PointStruct,  # noqa: F401 — imported here so callers can use it
+                VectorParams,
+            )
 
-    from qdrant_client import QdrantClient
-    from qdrant_client.models import (
-        Distance,
-        PayloadSchemaType,
-        PointStruct,  # noqa: F401 — imported here so callers can use it
-        VectorParams,
-    )
+            client = QdrantClient(url=QDRANT_URL, timeout=10, check_compatibility=False)
 
-    client = QdrantClient(url=QDRANT_URL, timeout=10, check_compatibility=False)
+            try:
+                client.get_collection(COLLECTION_NAME)
+            except Exception:
+                client.create_collection(
+                    COLLECTION_NAME,
+                    vectors_config=VectorParams(size=VECTOR_DIM, distance=Distance.COSINE),
+                )
+                # Payload index on user_id enables fast per-user filtered search
+                client.create_payload_index(
+                    COLLECTION_NAME,
+                    field_name="user_id",
+                    field_schema=PayloadSchemaType.KEYWORD,
+                )
+                print(f"[qdrant] Created collection '{COLLECTION_NAME}' with user_id index")
 
-    try:
-        client.get_collection(COLLECTION_NAME)
-    except Exception:
-        client.create_collection(
-            COLLECTION_NAME,
-            vectors_config=VectorParams(size=VECTOR_DIM, distance=Distance.COSINE),
-        )
-        # Payload index on user_id enables fast per-user filtered search
-        client.create_payload_index(
-            COLLECTION_NAME,
-            field_name="user_id",
-            field_schema=PayloadSchemaType.KEYWORD,
-        )
-        print(f"[qdrant] Created collection '{COLLECTION_NAME}' with user_id index")
-
-    _qdrant = client
+            _qdrant = client
     return _qdrant
 
 
@@ -402,6 +441,74 @@ async def _save_upload(upload: UploadFile, dest: Path) -> None:
             fh.write(chunk)
 
 
+# Audio magic-byte signatures for format validation (issue #19)
+_AUDIO_MAGIC: dict = {
+    b"RIFF": "wav",
+    b"fLaC": "flac",
+    b"OggS": "ogg",
+    b"ID3":  "mp3",
+    b"\xff\xfb": "mp3",
+    b"\xff\xf3": "mp3",
+    b"\xff\xf2": "mp3",
+    b"FORM": "aiff",
+}
+
+MAX_FILES_PER_USER = 500
+
+
+def _validate_audio_magic(path: Path) -> None:
+    """Raise HTTP 415 if the file doesn't begin with a known audio magic sequence."""
+    header = path.read_bytes()[:12]
+    for magic in _AUDIO_MAGIC:
+        if header.startswith(magic):
+            return
+    raise HTTPException(
+        status_code=415,
+        detail="Unsupported or invalid audio file format",
+    )
+
+
+async def _check_user_quota(user_id: str) -> None:
+    """Raise HTTP 429 if the user has reached MAX_FILES_PER_USER stored files."""
+    from qdrant_client.models import FieldCondition, Filter, MatchValue
+
+    loop = asyncio.get_running_loop()
+    count_result = await loop.run_in_executor(
+        None,
+        lambda: _get_qdrant().count(
+            collection_name=COLLECTION_NAME,
+            count_filter=Filter(
+                must=[FieldCondition(key="user_id", match=MatchValue(value=user_id))]
+            ),
+            exact=False,
+        ),
+    )
+    if count_result.count >= MAX_FILES_PER_USER:
+        raise HTTPException(
+            status_code=429,
+            detail=f"Storage quota exceeded ({MAX_FILES_PER_USER} files maximum)",
+        )
+
+
+def _scroll_all(qdrant_client, collection: str, scroll_filter, with_vectors: bool = False) -> list:
+    """Paginate through all matching Qdrant records, following the next_page_offset cursor."""
+    records: list = []
+    offset = None
+    while True:
+        batch, offset = qdrant_client.scroll(
+            collection_name=collection,
+            scroll_filter=scroll_filter,
+            with_payload=True,
+            with_vectors=with_vectors,
+            limit=256,
+            offset=offset,
+        )
+        records.extend(batch)
+        if offset is None:
+            break
+    return records
+
+
 # ---------------------------------------------------------------------------
 # Health
 # ---------------------------------------------------------------------------
@@ -464,6 +571,7 @@ async def tag_audio(
             safe_name = f"input{ext}"
         input_path = tmp_dir / safe_name
         await _save_upload(audio, input_path)
+        _validate_audio_magic(input_path)
 
         # Run pipeline
         tagger = _get_tagger()
@@ -513,6 +621,7 @@ async def tag_audio(
         if user_id:
             sub_type = await _get_subscription_type(token)
             if sub_type and sub_type != "free":
+                await _check_user_quota(user_id)
                 job_id = str(_uuid.uuid4())
                 dest = _stage_file(user_id, "tag", job_id, tagged_path.name, tagged_path)
                 asyncio.create_task(
@@ -571,6 +680,7 @@ async def separate_audio(
         _safe_name = Path(audio.filename or "input.wav").name or "input.wav"
         input_path = tmp_dir / _safe_name
         await _save_upload(audio, input_path)
+        _validate_audio_magic(input_path)
 
         output_dir = tmp_dir / "stems" / input_path.stem
         device = "cuda" if torch.cuda.is_available() else "cpu"
@@ -582,6 +692,7 @@ async def separate_audio(
         if user_id:
             sub_type = await _get_subscription_type(token)
             if sub_type and sub_type != "free":
+                await _check_user_quota(user_id)
                 job_id = str(_uuid.uuid4())
                 for stem_key, filepath in all_files.items():
                     p = Path(filepath)
@@ -640,6 +751,7 @@ async def cut_audio(
         _safe_name = Path(audio.filename or "input.wav").name or "input.wav"
         input_path = tmp_dir / _safe_name
         await _save_upload(audio, input_path)
+        _validate_audio_magic(input_path)
 
         output_path = tmp_dir / f"{input_path.stem}_trimmed.wav"
 
@@ -657,6 +769,7 @@ async def cut_audio(
         if user_id:
             sub_type = await _get_subscription_type(token)
             if sub_type and sub_type != "free":
+                await _check_user_quota(user_id)
                 job_id = str(_uuid.uuid4())
                 dest = _stage_file(user_id, "cut", job_id, output_path.name, output_path)
                 asyncio.create_task(
@@ -703,6 +816,7 @@ async def join_audio(
             ext = Path(f.filename or "input.wav").suffix or ".wav"
             fpath = tmp_dir / f"input_{i:03d}{ext}"
             await _save_upload(f, fpath)
+            _validate_audio_magic(fpath)
             input_paths.append(fpath)
 
         # Convert each to WAV PCM first for consistent concat
@@ -734,6 +848,7 @@ async def join_audio(
         if user_id:
             sub_type = await _get_subscription_type(token)
             if sub_type and sub_type != "free":
+                await _check_user_quota(user_id)
                 job_id = str(_uuid.uuid4())
                 dest = _stage_file(user_id, "join", job_id, "joined.wav", output_path)
                 original = ", ".join(f.filename or "input" for f in audio[:3])
@@ -778,6 +893,7 @@ async def karaoke_audio(
         _safe_name = Path(audio.filename or "input.wav").name or "input.wav"
         input_path = tmp_dir / _safe_name
         await _save_upload(audio, input_path)
+        _validate_audio_magic(input_path)
 
         device = "cuda" if torch.cuda.is_available() else "cpu"
 
@@ -805,6 +921,7 @@ async def karaoke_audio(
         if user_id:
             sub_type = await _get_subscription_type(token)
             if sub_type and sub_type != "free":
+                await _check_user_quota(user_id)
                 job_id = str(_uuid.uuid4())
                 dest = _stage_file(user_id, "karaoke", job_id, output_path.name, output_path)
                 asyncio.create_task(
@@ -860,6 +977,7 @@ async def convert_audio(
         _safe_name = Path(audio.filename or "input.wav").name or "input.wav"
         input_path = tmp_dir / _safe_name
         await _save_upload(audio, input_path)
+        _validate_audio_magic(input_path)
 
         # M4A needs an mp4 container — use a distinct output name
         out_stem = input_path.stem
@@ -876,6 +994,7 @@ async def convert_audio(
         if user_id:
             sub_type = await _get_subscription_type(token)
             if sub_type and sub_type != "free":
+                await _check_user_quota(user_id)
                 job_id = str(_uuid.uuid4())
                 dest = _stage_file(user_id, "convert", job_id, output_path.name, output_path)
                 asyncio.create_task(
@@ -1126,6 +1245,7 @@ async def bpm_key(
         _safe_name = Path(audio.filename or "input.wav").name or "input.wav"
         input_path = tmp_dir / _safe_name
         await _save_upload(audio, input_path)
+        _validate_audio_magic(input_path)
 
         result = _detect_bpm_key(str(input_path))
         return JSONResponse(result)
@@ -1235,6 +1355,7 @@ async def analyze_audio(
         _safe_name = Path(audio.filename or "input.wav").name or "input.wav"
         input_path = tmp_dir / _safe_name
         await _save_upload(audio, input_path)
+        _validate_audio_magic(input_path)
 
         result = _analyze_audio(str(input_path))
 
@@ -1242,6 +1363,7 @@ async def analyze_audio(
         if user_id:
             sub_type = await _get_subscription_type(token)
             if sub_type and sub_type != "free":
+                await _check_user_quota(user_id)
                 job_id = str(_uuid.uuid4())
                 dest = _stage_file(user_id, "analyze", job_id, input_path.name, input_path)
                 extra = {
@@ -1290,14 +1412,9 @@ async def list_files(authorization: str = Header(default=None)):
         from qdrant_client.models import FieldCondition, Filter, MatchValue
 
         qdrant = _get_qdrant()
-        records, _ = qdrant.scroll(
-            collection_name=COLLECTION_NAME,
-            scroll_filter=Filter(
-                must=[FieldCondition(key="user_id", match=MatchValue(value=user_id))]
-            ),
-            with_payload=True,
-            with_vectors=False,
-            limit=1000,
+        records = _scroll_all(
+            qdrant, COLLECTION_NAME,
+            Filter(must=[FieldCondition(key="user_id", match=MatchValue(value=user_id))]),
         )
 
         files = [{"id": str(r.id), **r.payload} for r in records]
@@ -1334,6 +1451,7 @@ async def upload_files_to_graph(
     profile = await _require_premium_profile(token)
     user_id = profile["clerk_id"]
 
+    await _check_user_quota(user_id)
     job_id = str(_uuid.uuid4())
     queued = 0
 
@@ -1343,6 +1461,7 @@ async def upload_files_to_graph(
             fname = upload.filename or f"upload_{queued}.wav"
             input_path = tmp_dir / fname
             await _save_upload(upload, input_path)
+            _validate_audio_magic(input_path)
 
             dest = _stage_file(user_id, "upload", job_id, fname, input_path)
             await _schedule_embed(
@@ -1412,7 +1531,8 @@ async def get_file_audio(point_id: str, authorization: str = Header(default=None
 
     try:
         s3 = _get_s3_upload()
-        obj = await asyncio.get_event_loop().run_in_executor(
+        loop = asyncio.get_running_loop()
+        obj = await loop.run_in_executor(
             None,
             lambda: s3.get_object(Bucket=R2_BUCKET_NAME, Key=r2_key),
         )
@@ -1423,9 +1543,9 @@ async def get_file_audio(point_id: str, authorization: str = Header(default=None
     body = obj["Body"]
     content_length = obj.get("ContentLength")
 
-    def _iter_chunks():
+    async def _aiter_chunks():
         while True:
-            chunk = body.read(65536)
+            chunk = await loop.run_in_executor(None, body.read, 65536)
             if not chunk:
                 break
             yield chunk
@@ -1437,7 +1557,7 @@ async def get_file_audio(point_id: str, authorization: str = Header(default=None
     headers["Cache-Control"] = "no-store"
 
     return StreamingResponse(
-        _iter_chunks(),
+        _aiter_chunks(),
         media_type=content_type,
         headers=headers,
     )
@@ -1519,6 +1639,7 @@ async def search_files(
             _safe_name = Path(audio.filename or "query.wav").name or "query.wav"
             input_path = tmp_dir / _safe_name
             await _save_upload(audio, input_path)
+            _validate_audio_magic(input_path)
             waveform = embedder.load_audio(str(input_path))
             query_emb = embedder.embed(waveform)
         else:
@@ -1560,6 +1681,96 @@ async def search_files(
 # GET /api/files/graph — 3D graph data (nodes + k-NN links) for a user
 # ---------------------------------------------------------------------------
 
+_GRAPH_MAX_NODES = 2000
+
+
+def _compute_graph(user_id: str) -> dict:
+    """
+    Synchronous graph computation, run inside _graph_pool to avoid blocking
+    the async event loop (O(n²) matrix multiply for k-NN).
+    """
+    from qdrant_client.models import FieldCondition, Filter, MatchValue
+    from sklearn.decomposition import PCA
+
+    user_filter = Filter(must=[FieldCondition(key="user_id", match=MatchValue(value=user_id))])
+    records = _scroll_all(_get_qdrant(), COLLECTION_NAME, user_filter, with_vectors=True)
+
+    if not records:
+        return {"nodes": [], "links": [], "truncated": False}
+
+    truncated = len(records) > _GRAPH_MAX_NODES
+    if truncated:
+        records = records[:_GRAPH_MAX_NODES]
+
+    # Build raw vector matrix — handle both unnamed (List[float]) and named
+    # (Dict[str, List[float]]) vector formats across qdrant-client versions.
+    vecs = []
+    for r in records:
+        v = r.vector
+        if v is None:
+            v = [0.0] * VECTOR_DIM
+        elif isinstance(v, dict):
+            v = v.get("", next(iter(v.values()), [0.0] * VECTOR_DIM))
+        vecs.append(v)
+    vecs_np = np.array(vecs, dtype=np.float32)
+
+    # PCA → 3D starting positions (scaled to ±100 range)
+    n = len(vecs_np)
+    n_components = min(3, n)
+    if n >= 2:
+        coords = PCA(n_components=n_components).fit_transform(vecs_np)
+        if coords.shape[1] < 3:
+            padding = np.zeros((n, 3 - coords.shape[1]), dtype=np.float32)
+            coords = np.hstack([coords, padding])
+        scale = 150.0 / (coords.std() + 1e-8)
+        coords *= scale
+    else:
+        coords = np.zeros((n, 3), dtype=np.float32)
+
+    nodes = []
+    for i, r in enumerate(records):
+        p = r.payload
+        nodes.append({
+            "id": str(r.id),
+            "filename": p.get("filename", ""),
+            "process_type": p.get("process_type", ""),
+            "subgroup": p.get("subgroup", ""),
+            "duration": p.get("duration", 0),
+            "created_at": p.get("created_at", ""),
+            "original_filename": p.get("original_filename", ""),
+            "x": round(float(coords[i, 0]), 2),
+            "y": round(float(coords[i, 1]), 2),
+            "z": round(float(coords[i, 2]), 2),
+        })
+
+    K = 4
+    SIM_THRESHOLD = 0.45
+    norms = np.linalg.norm(vecs_np, axis=1, keepdims=True)
+    normed = vecs_np / np.maximum(norms, 1e-10)
+    sim_matrix = normed @ normed.T
+
+    edge_set: set = set()
+    links = []
+    for i in range(n):
+        row = sim_matrix[i].copy()
+        row[i] = -1.0
+        top_k = np.argsort(row)[::-1][:K]
+        for j in top_k:
+            sim = float(row[j])
+            if sim < SIM_THRESHOLD:
+                continue
+            key = (min(nodes[i]["id"], nodes[j]["id"]), max(nodes[i]["id"], nodes[j]["id"]))
+            if key not in edge_set:
+                edge_set.add(key)
+                links.append({
+                    "source": nodes[i]["id"],
+                    "target": nodes[j]["id"],
+                    "similarity": round(sim, 3),
+                })
+
+    return {"nodes": nodes, "links": links, "truncated": truncated}
+
+
 @app.get("/api/files/graph")
 async def get_graph_data(authorization: str = Header(default=None)):
     """
@@ -1576,101 +1787,71 @@ async def get_graph_data(authorization: str = Header(default=None)):
     user_id = profile["clerk_id"]
 
     try:
-        from qdrant_client.models import FieldCondition, Filter, MatchValue
-        from sklearn.decomposition import PCA
-
-        qdrant = _get_qdrant()
-        records, _ = qdrant.scroll(
-            collection_name=COLLECTION_NAME,
-            scroll_filter=Filter(
-                must=[FieldCondition(key="user_id", match=MatchValue(value=user_id))]
-            ),
-            with_payload=True,
-            with_vectors=True,
-            limit=500,
-        )
-
-        if not records:
-            return JSONResponse({"nodes": [], "links": []})
-
-        # Build raw vector matrix — handle both unnamed (List[float]) and named
-        # (Dict[str, List[float]]) vector formats across qdrant-client versions.
-        vecs = []
-        for r in records:
-            v = r.vector
-            if v is None:
-                v = [0.0] * VECTOR_DIM
-            elif isinstance(v, dict):
-                # Named vector: take the default "" key or first available key
-                v = v.get("", next(iter(v.values()), [0.0] * VECTOR_DIM))
-            vecs.append(v)
-        vecs_np = np.array(vecs, dtype=np.float32)
-
-        # PCA → 3D starting positions (scaled to ±100 range)
-        n = len(vecs_np)
-        n_components = min(3, n)
-        if n >= 2:
-            coords = PCA(n_components=n_components).fit_transform(vecs_np)
-            # Pad to 3 columns if fewer than 3 components
-            if coords.shape[1] < 3:
-                padding = np.zeros((n, 3 - coords.shape[1]), dtype=np.float32)
-                coords = np.hstack([coords, padding])
-            scale = 150.0 / (coords.std() + 1e-8)
-            coords *= scale
-        else:
-            coords = np.zeros((n, 3), dtype=np.float32)
-
-        # Build node list with positions
-        nodes = []
-        for i, r in enumerate(records):
-            p = r.payload
-            nodes.append({
-                "id": str(r.id),
-                "filename": p.get("filename", ""),
-                "process_type": p.get("process_type", ""),
-                "subgroup": p.get("subgroup", ""),
-                "duration": p.get("duration", 0),
-                "created_at": p.get("created_at", ""),
-                "original_filename": p.get("original_filename", ""),
-                "x": round(float(coords[i, 0]), 2),
-                "y": round(float(coords[i, 1]), 2),
-                "z": round(float(coords[i, 2]), 2),
-            })
-
-        # Build k-NN edges using cosine similarity
-        K = 4
-        SIM_THRESHOLD = 0.45
-        norms = np.linalg.norm(vecs_np, axis=1, keepdims=True)
-        normed = vecs_np / np.maximum(norms, 1e-10)
-        sim_matrix = normed @ normed.T  # (n, n)
-
-        edge_set: set = set()
-        links = []
-        for i in range(n):
-            row = sim_matrix[i].copy()
-            row[i] = -1.0  # exclude self
-            top_k = np.argsort(row)[::-1][:K]
-            for j in top_k:
-                sim = float(row[j])
-                if sim < SIM_THRESHOLD:
-                    continue
-                key = (min(nodes[i]["id"], nodes[j]["id"]),
-                       max(nodes[i]["id"], nodes[j]["id"]))
-                if key not in edge_set:
-                    edge_set.add(key)
-                    links.append({
-                        "source": nodes[i]["id"],
-                        "target": nodes[j]["id"],
-                        "similarity": round(sim, 3),
-                    })
-
-        return JSONResponse({"nodes": nodes, "links": links})
+        loop = asyncio.get_running_loop()
+        result = await loop.run_in_executor(_graph_pool, _compute_graph, user_id)
+        return JSONResponse(result)
 
     except HTTPException:
         raise
     except Exception as exc:
         log.exception("Unhandled error in /api/files/graph")
         raise HTTPException(status_code=500, detail="Internal server error") from exc
+
+
+# ---------------------------------------------------------------------------
+# DELETE /api/files/{point_id} — Remove a single file from the user's graph
+# ---------------------------------------------------------------------------
+
+@app.delete("/api/files/{point_id}")
+async def delete_file(point_id: str, authorization: str = Header(default=None)):
+    """
+    Delete one file from the authenticated user's graph.
+    Removes the Qdrant vector and the corresponding R2 object.
+    Ownership is verified before deletion.
+    """
+    if not authorization:
+        raise HTTPException(status_code=401, detail="Authorization required")
+    token = authorization.removeprefix("Bearer ").strip()
+    user_id = await _resolve_user_id(token)
+    if not user_id:
+        raise HTTPException(status_code=401, detail="Invalid or expired token")
+
+    try:
+        qdrant = _get_qdrant()
+        records = qdrant.retrieve(
+            collection_name=COLLECTION_NAME,
+            ids=[point_id],
+            with_payload=True,
+        )
+    except Exception as exc:
+        log.exception("Unhandled error retrieving point %s for deletion", point_id)
+        raise HTTPException(status_code=500, detail="Internal server error") from exc
+
+    if not records:
+        raise HTTPException(status_code=404, detail="File not found")
+
+    payload = records[0].payload
+    if payload.get("user_id") != user_id:
+        raise HTTPException(status_code=403, detail="Access denied")
+
+    r2_key = payload.get("r2_key")
+    if r2_key:
+        try:
+            loop = asyncio.get_running_loop()
+            await loop.run_in_executor(
+                None,
+                lambda: _get_s3_upload().delete_object(Bucket=R2_BUCKET_NAME, Key=r2_key),
+            )
+        except Exception as exc:
+            log.error("S3 delete failed for key %s: %s", r2_key, exc)
+
+    try:
+        qdrant.delete(collection_name=COLLECTION_NAME, points_selector=[point_id])
+    except Exception as exc:
+        log.exception("Qdrant delete failed for point %s", point_id)
+        raise HTTPException(status_code=500, detail="Internal server error") from exc
+
+    return JSONResponse({"deleted": point_id})
 
 
 # ---------------------------------------------------------------------------

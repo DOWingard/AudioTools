@@ -968,18 +968,18 @@ Work through these in order. Critical issues first, then High, Medium, Low. Issu
 
 ### Medium
 
-- [ ] **#14** — Apply double-checked `threading.Lock` to `_get_qdrant`, `_get_s3_upload`, `_get_s3_presign`, `_get_tagger`, `_get_embedder` (`api/main.py:96, 118, 133, 152`)
-- [ ] **#5b** — (dependency of #14 alternative) Eagerly initialise all singletons in a `startup` lifespan handler instead of lazy-init, eliminating the race entirely
-- [ ] **#15 / #16** — Replace `requests.get` JWKS fetch with `httpx` async call; add 1-hour TTL; pre-warm at startup via scheduler (`auth/main.py:49, 55`)
-- [ ] **#17** — Replace `asyncio.get_event_loop()` with `asyncio.get_running_loop()`; convert `_iter_chunks` sync generator to async generator with `run_in_executor` per chunk (`api/main.py:1363, 1373`)
-- [ ] **#19** — Write `_validate_audio_magic()` helper; call it after each upload write, before pipeline entry (`api/main.py:429+`)
-- [ ] **#12** — Replace hardcoded `scroll(limit=1000/500)` with `_scroll_all()` paginating helper; add `truncated` flag to graph response (`api/main.py:1240, 1520`)
-- [ ] **#18** — Write `_check_user_quota()` using `qdrant.count`; call it before staging in upload and all processing endpoints (`api/main.py:1264+`)
-- [ ] **#13** — Move PCA + k-NN computation into `_graph_pool` thread executor in `get_graph_data` (`api/main.py:1582`)
+- [x] **#14** — Apply double-checked `threading.Lock` to `_get_qdrant`, `_get_s3_upload`, `_get_s3_presign`, `_get_tagger`, `_get_embedder` (`api/main.py:96, 118, 133, 152`)
+- [x] **#5b** — Stale-file startup cleanup added; threading locks cover the race (alternative to eager init)
+- [x] **#15 / #16** — Replace `requests.get` JWKS fetch with `httpx` async call; add 1-hour TTL; pre-warm at startup via scheduler (`auth/main.py:49, 55`)
+- [x] **#17** — Replace `asyncio.get_event_loop()` with `asyncio.get_running_loop()`; convert `_iter_chunks` sync generator to async `_aiter_chunks` with `run_in_executor` per chunk (`api/main.py`)
+- [x] **#19** — Added `_validate_audio_magic()` helper; called after every upload write in all 9 processing endpoints (`api/main.py`)
+- [x] **#12** — Replaced hardcoded `scroll(limit=1000/500)` with `_scroll_all()` paginating helper; `truncated` flag added to graph response (`api/main.py`)
+- [x] **#18** — Added `_check_user_quota()` using `qdrant.count`; called before staging in upload and all 6 processing endpoints that embed (`api/main.py`)
+- [x] **#13** — Moved PCA + k-NN computation into `_compute_graph()` run via `_graph_pool` thread executor in `get_graph_data` (`api/main.py`)
 
 ### Low
 
-- [ ] **#20** — Implement `DELETE /api/files/{point_id}` endpoint with ownership check, Qdrant delete, and S3 delete (`api/main.py`)
-- [ ] **#22** — Change `STAGING_DIR` default to `/var/lib/syntag/staging`; pass `mode=0o700` to `mkdir`; add stale-file cleanup sweep at startup (`api/main.py:61`)
-- [ ] **#21** — Add `CHECK` constraint to `users` table relating `subscription_active` and `subscription_status` (`database/init.sql`)
-- [ ] **#23** — Create `subscription_events` table; append a row in every Stripe webhook branch (`database/init.sql`, `auth/main.py:316`)
+- [x] **#20** — Implemented `DELETE /api/files/{point_id}` endpoint with ownership check, Qdrant delete, and S3 delete (`api/main.py`)
+- [x] **#22** — Changed `STAGING_DIR` default to `/var/lib/syntag/staging`; `mode=0o700` passed to `mkdir`; stale-file cleanup sweep added via `@app.on_event("startup")` (`api/main.py`)
+- [x] **#21** — Added `chk_subscription_consistency` CHECK constraint to `users` table (`database/init.sql`)
+- [x] **#23** — Created `subscription_events` table; audit row inserted in every Stripe webhook branch (`database/init.sql`, `auth/main.py`)

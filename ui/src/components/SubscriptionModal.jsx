@@ -33,21 +33,26 @@ export default function SubscriptionModal({ open, onClose, initialPlan = null })
     const [error, setError] = useState('');
 
     const fetchClientSecret = useCallback(async () => {
-        const token = await getToken();
-        const resp = await fetch('/auth/billing/checkout', {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-                Authorization: `Bearer ${token}`,
-            },
-            body: JSON.stringify({ plan: selectedPlan }),
-        });
-        if (!resp.ok) {
-            const msg = await resp.text();
-            throw new Error(`Checkout failed (${resp.status}): ${msg}`);
+        try {
+            const token = await getToken();
+            const resp = await fetch('/auth/billing/checkout', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    Authorization: `Bearer ${token}`,
+                },
+                body: JSON.stringify({ plan: selectedPlan }),
+            });
+            if (!resp.ok) {
+                const msg = await resp.text();
+                throw new Error(`Checkout failed (${resp.status}): ${msg}`);
+            }
+            const { client_secret } = await resp.json();
+            return client_secret;
+        } catch (e) {
+            setError(e.message);
+            throw e;
         }
-        const { client_secret } = await resp.json();
-        return client_secret;
     }, [getToken, selectedPlan]);
 
     const handleClose = () => {
@@ -133,12 +138,16 @@ export default function SubscriptionModal({ open, onClose, initialPlan = null })
                             </h2>
                         </div>
 
-                        <EmbeddedCheckoutProvider
-                            stripe={stripePromise}
-                            options={{ fetchClientSecret }}
-                        >
-                            <EmbeddedCheckout />
-                        </EmbeddedCheckoutProvider>
+                        {error ? (
+                            <p className="status-error" style={{ marginTop: '1rem' }}>❌ {error}</p>
+                        ) : (
+                            <EmbeddedCheckoutProvider
+                                stripe={stripePromise}
+                                options={{ fetchClientSecret }}
+                            >
+                                <EmbeddedCheckout />
+                            </EmbeddedCheckoutProvider>
+                        )}
                     </>
                 )}
             </div>
