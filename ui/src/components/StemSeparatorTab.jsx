@@ -1,4 +1,4 @@
-import { useState, useRef } from 'react';
+import { useState, useRef, useEffect } from 'react';
 import JSZip from 'jszip';
 import { useAuth } from '@clerk/clerk-react';
 import WaveformPlayer from './WaveformPlayer.jsx';

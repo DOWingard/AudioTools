@@ -16,4 +16,17 @@ export default defineConfig({
             },
         },
     },
+    build: {
+        rollupOptions: {
+            output: {
+                manualChunks: {
+                    vendor_react: ['react', 'react-dom'],
+                    vendor_clerk: ['@clerk/clerk-react'],
+                    vendor_wavesurfer: ['wavesurfer.js'],
+                    vendor_jszip: ['jszip'],
+                },
+            },
+        },
+        chunkSizeWarningLimit: 600,
+    },
 });
