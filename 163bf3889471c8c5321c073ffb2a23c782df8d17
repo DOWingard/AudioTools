@@ -1,0 +1,25 @@
+.claude/settings.json
+  44f90dc9180a9013 9
+ui/src/App.jsx
+  44f90dc9180a9013 1-2,18-79,235-236,247-248
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.1.4",
+  "base_commit_sha": "163bf3889471c8c5321c073ffb2a23c782df8d17",
+  "prompts": {
+    "44f90dc9180a9013": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "68446746-d331-498a-b3d9-d49630139513",
+        "model": "claude-sonnet-4-6"
+      },
+      "human_author": "Derek Wingard <derekwingard@gmail.com>",
+      "messages": [],
+      "total_additions": 79,
+      "total_deletions": 15,
+      "accepted_lines": 69,
+      "overriden_lines": 0
+    }
+  }
+}
