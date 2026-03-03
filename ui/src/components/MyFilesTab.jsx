@@ -481,7 +481,7 @@ function FilesView({ files, loading, error, nowPlaying, loadingId, onPlay, onDel
 
 /* ─── Smart Search (standalone, no 3D graph) ─────────────────────────────── */
 
-function SmartSearch({ token, onDelete, onDownloadFile, isPremiumUser, onPremiumAction }) {
+function SmartSearch({ getToken, onDelete, onDownloadFile, isPremiumUser, onPremiumAction }) {
     const { setIsProcessing } = useAuthContext();
     const [queryFile, setQueryFile] = useState(null);
     const [results, setResults] = useState([]);
@@ -499,7 +499,7 @@ function SmartSearch({ token, onDelete, onDownloadFile, isPremiumUser, onPremium
     }, [searching, deletingBulk, setIsProcessing]);
 
     const search = useCallback(async (offset = 0) => {
-        if (!token || !queryFile) return;
+        if (!queryFile) return;
         setSearching(true);
         try {
             const form = new FormData();
@@ -507,10 +507,11 @@ function SmartSearch({ token, onDelete, onDownloadFile, isPremiumUser, onPremium
             form.append('offset', String(offset));
             form.append('limit', '10');
 
+            const t = await getToken();
             const resp = await fetch(`${API_BASE}/files/search`, {
                 method: 'POST',
                 body: form,
-                headers: { Authorization: `Bearer ${token}` },
+                headers: { Authorization: `Bearer ${t}` },
             });
             if (!resp.ok) throw new Error(`API ${resp.status}: ${await resp.text()}`);
             const data = await resp.json();
@@ -530,7 +531,7 @@ function SmartSearch({ token, onDelete, onDownloadFile, isPremiumUser, onPremium
         } finally {
             setSearching(false);
         }
-    }, [token, queryFile]);
+    }, [getToken, queryFile]);
 
     const toggleSelect = useCallback((id) => {
         setSelectedIds(prev => {
@@ -869,7 +870,6 @@ export default function MyFilesTab() {
     const [files, setFiles] = useState([]);
     const [filesLoading, setFilesLoading] = useState(false);
     const [filesError, setFilesError] = useState('');
-    const [token, setToken] = useState(null);
 
     // Bulk upload state
     const [bulkUploading, setBulkUploading] = useState(false);
@@ -885,28 +885,34 @@ export default function MyFilesTab() {
     const [nowPlaying, setNowPlaying] = useState(null); // {id, filename, process_type, subgroup, duration, blob, loading}
     const [loadingId, setLoadingId] = useState(null);
 
-    // ── Fetch files + token ─────────────────────────────────────────────────
+    // ── Fetch files ──────────────────────────────────────────────────────────
     const fetchFiles = useCallback(async () => {
         if (!isSignedIn) return;
         setFilesLoading(true);
         setFilesError('');
         try {
             const t = await getToken();
-            setToken(t);
             const resp = await fetch(`${API_BASE}/files`, {
                 headers: { Authorization: `Bearer ${t}` },
             });
             if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
             const data = await resp.json();
             const fetched = data.files || [];
-            setFiles(fetched);
+
+            setFiles(prev => {
+                const isSame = fetched.length === prev.length && fetched.every((f, i) => f.id === prev[i]?.id);
+                return isSame ? prev : fetched;
+            });
+
             setFileCount(fetched.length);
+            return fetched.length;
         } catch (e) {
             setFilesError(e.message);
+            return undefined;
         } finally {
             setFilesLoading(false);
         }
-    }, [isSignedIn, getToken]);
+    }, [isSignedIn, getToken, setFileCount]);
 
     useEffect(() => { fetchFiles(); }, [fetchFiles]);
 
@@ -920,28 +926,29 @@ export default function MyFilesTab() {
     const stableCountRef = useRef(0);
     const [isPolling, setIsPolling] = useState(false);
 
-    // Stop polling when count is stable for 3 consecutive 4-second polls.
-    useEffect(() => {
-        const prev = filesLengthRef.current;
-        const next = files.length;
-        if (next > prev) {
-            stableCountRef.current = 0;
-        } else if (pollingTimerRef.current !== null) {
-            stableCountRef.current += 1;
-            if (stableCountRef.current >= 3) {
-                clearInterval(pollingTimerRef.current);
-                pollingTimerRef.current = null;
-                setIsPolling(false);
-            }
-        }
-        filesLengthRef.current = next;
-    }, [files]); // eslint-disable-line react-hooks/exhaustive-deps
-
     const startPolling = useCallback(() => {
         if (pollingTimerRef.current) return; // already running
         stableCountRef.current = 0;
         setIsPolling(true);
-        pollingTimerRef.current = setInterval(() => { fetchFiles(); }, 4000);
+
+        pollingTimerRef.current = setInterval(async () => {
+            const nextLength = await fetchFiles();
+            if (nextLength !== undefined) {
+                const prev = filesLengthRef.current;
+                if (nextLength > prev) {
+                    stableCountRef.current = 0;
+                } else {
+                    stableCountRef.current += 1;
+                    if (stableCountRef.current >= 3) {
+                        clearInterval(pollingTimerRef.current);
+                        pollingTimerRef.current = null;
+                        setIsPolling(false);
+                    }
+                }
+                filesLengthRef.current = nextLength;
+            }
+        }, 4000);
+
         // Safety cap: stop after 5 minutes regardless
         setTimeout(() => {
             if (pollingTimerRef.current) {
@@ -989,7 +996,7 @@ export default function MyFilesTab() {
         });
 
         try {
-            const t = token || await getToken();
+            const t = await getToken();
             const resp = await fetch(`${API_BASE}/files/${file.id}/audio`, {
                 headers: { Authorization: `Bearer ${t}` },
             });
@@ -1006,7 +1013,7 @@ export default function MyFilesTab() {
         } finally {
             setLoadingId(null);
         }
-    }, [nowPlaying, token, getToken]);
+    }, [nowPlaying, getToken]);
 
     // ── Flat ordered file list (matches FilesView render order) ─────────────
     const orderedFiles = useMemo(() => {
@@ -1066,7 +1073,7 @@ export default function MyFilesTab() {
     // ── Download a single file via authenticated fetch ───────────────────────
     const downloadFile = useCallback(async (file) => {
         try {
-            const t = token || await getToken();
+            const t = await getToken();
             const resp = await fetch(`${API_BASE}/files/${file.id}/audio`, {
                 headers: { Authorization: `Bearer ${t}` },
             });
@@ -1083,12 +1090,12 @@ export default function MyFilesTab() {
         } catch (err) {
             alert(`Failed to download ${file.filename}: ${err.message}`);
         }
-    }, [token, getToken]);
+    }, [getToken]);
 
     // ── Delete a file (Qdrant + R2) ─────────────────────────────────────────
     const deleteFile = useCallback(async (fileId) => {
         try {
-            const t = token || await getToken();
+            const t = await getToken();
             const resp = await fetch(`${API_BASE}/files/${fileId}`, {
                 method: 'DELETE',
                 headers: { Authorization: `Bearer ${t}` },
@@ -1104,7 +1111,7 @@ export default function MyFilesTab() {
         } catch (err) {
             alert(`Failed to remove file: ${err.message}`);
         }
-    }, [token, getToken, nowPlaying]);
+    }, [getToken, nowPlaying]);
 
     // ── Bulk upload (standard+ — enforced by backend quota) ──────────────────
     const handleUploadClick = useCallback(() => {
@@ -1125,7 +1132,7 @@ export default function MyFilesTab() {
         setBulkUploading(true);
         setBulkStatus(`Uploading ${selectedFiles.length} file${selectedFiles.length > 1 ? 's' : ''}…`);
         try {
-            const t = token || await getToken();
+            const t = await getToken();
             const form = new FormData();
             selectedFiles.forEach(f => form.append('audio', f));
 
@@ -1151,7 +1158,7 @@ export default function MyFilesTab() {
             // Clear status after 6 seconds
             setTimeout(() => setBulkStatus(''), 6000);
         }
-    }, [token, getToken, fetchFiles, startPolling]);
+    }, [getToken, fetchFiles, startPolling]);
 
     // ── Auth gates ───────────────────────────────────────────────────────────
 
@@ -1287,9 +1294,9 @@ export default function MyFilesTab() {
             )}
 
             {/* ── Smart Search view (premium only) ─────────────── */}
-            {view === 'search' && isPremiumUser && token && (
+            {view === 'search' && isPremiumUser && (
                 <SmartSearch
-                    token={token}
+                    getToken={getToken}
                     onDelete={deleteFile}
                     onDownloadFile={downloadFile}
                     isPremiumUser={isPremiumUser}
