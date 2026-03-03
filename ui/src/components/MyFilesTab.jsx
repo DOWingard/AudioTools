@@ -2,25 +2,15 @@
  * MyFilesTab — Library of the user's stored audio files.
  *
  * Sub-tabs:
- *   "Saved Files" — grouped list (standard + premium)
- *   "Smart Graph" — 3D force graph with similarity search (premium only)
- *
- * Shared state:
- *   nowPlaying — the file currently loaded in the NowPlaying bar
- *
- * Graph highlights accumulate: each search batch adds to the highlighted set,
- * growing the cluster visible in the graph.
+ *   "Saved Files" — grouped list with Upload button (standard + premium; upload is premium-only)
+ *   "Smart Search" — AI similarity search using advanced AI embeddings (Premium only)
  */
 
-import { useState, useEffect, useRef, useCallback, useMemo, Suspense, lazy } from 'react';
+import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { createPortal } from 'react-dom';
 import { useAuth } from '@clerk/clerk-react';
-import * as THREE from 'three';
 import WaveformPlayer from './WaveformPlayer.jsx';
 import { useAuthContext } from '../AuthContext.jsx';
-
-// Lazy-load ForceGraph3D — it pulls in Three.js and ~500KB of WebGL code
-const ForceGraph3D = lazy(() => import('react-force-graph-3d'));
 
 const API_BASE = '/api';
 
@@ -79,63 +69,6 @@ function fmtDur(secs) {
 function fmtSize(bytes) {
     if (!bytes) return '';
     return bytes < 1048576 ? `${(bytes / 1024).toFixed(0)} KB` : `${(bytes / 1048576).toFixed(1)} MB`;
-}
-
-function nodeColor(pt) { return (PROCESS_META[pt] || { color: '#888' }).color; }
-
-function linkColor(sim) {
-    if (sim >= 0.85) return 'rgba(0,255,136,0.75)';
-    if (sim >= 0.70) return 'rgba(0,200,255,0.55)';
-    if (sim >= 0.55) return 'rgba(140,80,255,0.40)';
-    return 'rgba(80,40,160,0.20)';
-}
-
-/* ─── Three.js node factory (called by nodeThreeObject) ──────────────────── */
-
-function makeNodeObj(node, isHighlighted, isPlaying) {
-    const color = nodeColor(node.process_type);
-    const size = Math.max(3.5, Math.min(9, 3.5 + (node.duration || 0) / 25));
-    const group = new THREE.Group();
-
-    // Core sphere
-    const coreMat = new THREE.MeshPhongMaterial({
-        color,
-        emissive: color,
-        emissiveIntensity: isHighlighted ? 0.9 : (isPlaying ? 1.0 : 0.15),
-        shininess: 120,
-    });
-    group.add(new THREE.Mesh(new THREE.SphereGeometry(size, 14, 14), coreMat));
-
-    // Highlighted: gold outer glow (additive blending = bloom-like effect)
-    if (isHighlighted && !isPlaying) {
-        const glowMat = new THREE.MeshBasicMaterial({
-            color: '#ffcc00',
-            transparent: true,
-            opacity: 0.20,
-            side: THREE.BackSide,
-        });
-        group.add(new THREE.Mesh(new THREE.SphereGeometry(size * 2.4, 14, 14), glowMat));
-    }
-
-    // Playing: white torus ring + bright inner glow
-    if (isPlaying) {
-        const ringMat = new THREE.MeshBasicMaterial({
-            color: '#ffffff',
-            transparent: true,
-            opacity: 0.75,
-        });
-        group.add(new THREE.Mesh(new THREE.TorusGeometry(size * 1.7, 0.5, 8, 32), ringMat));
-        // Secondary glow
-        const pglow = new THREE.MeshBasicMaterial({
-            color: '#ffffff',
-            transparent: true,
-            opacity: 0.12,
-            side: THREE.BackSide,
-        });
-        group.add(new THREE.Mesh(new THREE.SphereGeometry(size * 2.8, 14, 14), pglow));
-    }
-
-    return group;
 }
 
 /* ─── NowPlaying bar (fixed bottom) ─────────────────────────────────────── */
@@ -218,18 +151,28 @@ function NowPlayingBar({ nowPlaying, onClose, onPrev, onNext }) {
 
 /* ─── FileRow ────────────────────────────────────────────────────────────── */
 
-function FileRow({ file, isPlaying, isLoading, onPlay, accentColor }) {
+function FileRow({ file, isPlaying, isLoading, onPlay, selected, onSelect, accentColor }) {
     return (
         <div
             data-file-id={file.id}
             style={{
                 display: 'flex', alignItems: 'center', gap: '0.75rem',
-                background: isPlaying ? `${accentColor}11` : 'var(--bg-surface)',
-                border: `1px solid ${isPlaying ? accentColor + '44' : 'var(--border)'}`,
+                background: selected ? `${accentColor}18` : (isPlaying ? `${accentColor}11` : 'var(--bg-surface)'),
+                border: `1px solid ${selected ? accentColor + '66' : (isPlaying ? accentColor + '44' : 'var(--border)')}`,
                 borderRadius: 'var(--radius-md)', padding: '0.7rem 0.875rem',
                 marginBottom: '0.5rem', transition: 'all 0.15s',
             }}
         >
+            {/* Checkbox */}
+            <input
+                type="checkbox"
+                checked={selected}
+                onChange={onSelect}
+                style={{ width: 15, height: 15, minWidth: 15, cursor: 'pointer', accentColor, flexShrink: 0 }}
+                title="Select file"
+            />
+
+            {/* Play button */}
             <button
                 onClick={onPlay}
                 disabled={isLoading}
@@ -246,11 +189,13 @@ function FileRow({ file, isPlaying, isLoading, onPlay, accentColor }) {
                 {isLoading ? '⏳' : (isPlaying ? '♫' : '▶')}
             </button>
 
+            {/* Filename */}
             <span style={{ flex: 1, fontWeight: 500, fontSize: '0.875rem', wordBreak: 'break-all', minWidth: 0 }}>
                 {file.filename}
             </span>
 
-            <div style={{ display: 'flex', gap: '0.4rem', flexShrink: 0, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+            {/* Metadata */}
+            <div style={{ display: 'flex', gap: '0.4rem', flexShrink: 0, flexWrap: 'wrap', justifyContent: 'flex-end', alignItems: 'center' }}>
                 {file.duration > 0 && (
                     <span style={{ fontSize: '0.72rem', color: 'var(--text-secondary)', whiteSpace: 'nowrap' }}>
                         {fmtDur(file.duration)}
@@ -271,9 +216,114 @@ function FileRow({ file, isPlaying, isLoading, onPlay, accentColor }) {
     );
 }
 
+/* ─── Shared: bulk selection bar ────────────────────────────────────────── */
+
+function BulkSelectionBar({ count, onDownload, onRequestDelete, onClear }) {
+    return (
+        <div className="card" style={{
+            marginBottom: '1rem',
+            display: 'flex', alignItems: 'center', gap: '0.75rem', flexWrap: 'wrap',
+            background: 'var(--bg-card)', borderColor: 'var(--border)',
+        }}>
+            <span style={{ fontSize: '0.875rem', color: 'var(--text-secondary)', flex: 1 }}>
+                {count} file{count !== 1 ? 's' : ''} selected
+            </span>
+            <button className="btn btn-secondary" style={{ padding: '0.35rem 0.9rem', fontSize: '0.82rem' }} onClick={onDownload}>
+                ⬇ Download
+            </button>
+            <button
+                className="btn"
+                style={{ padding: '0.35rem 0.9rem', fontSize: '0.82rem', background: '#ef4444', color: '#fff', border: '1px solid #ef4444' }}
+                onClick={onRequestDelete}
+            >
+                🗑 Delete
+            </button>
+            <button
+                onClick={onClear}
+                style={{
+                    background: 'none', border: '1px solid var(--border)',
+                    borderRadius: 'var(--radius-full)', width: 24, height: 24, minWidth: 24,
+                    cursor: 'pointer', color: 'var(--text-muted)', fontSize: '0.65rem',
+                    display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 0,
+                }}
+                title="Clear selection"
+            >
+                ✕
+            </button>
+        </div>
+    );
+}
+
+/* ─── Shared: delete confirmation overlay ───────────────────────────────── */
+
+function DeleteConfirmOverlay({ count, onConfirm, onCancel, deleting }) {
+    return createPortal(
+        <div style={{
+            position: 'fixed', inset: 0,
+            background: 'rgba(0,0,0,0.6)',
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            zIndex: 1000,
+        }}>
+            <div className="card" style={{ maxWidth: 380, width: '90%', textAlign: 'center', padding: '2rem' }}>
+                <h3 style={{ margin: '0 0 0.5rem', fontSize: '1.1rem' }}>Are you sure?</h3>
+                <p style={{ color: 'var(--text-secondary)', margin: '0 0 1.5rem', fontSize: '0.9rem' }}>
+                    Deleting {count} file{count !== 1 ? 's' : ''} is permanent and cannot be undone.
+                </p>
+                <div style={{ display: 'flex', gap: '0.75rem', justifyContent: 'center' }}>
+                    <button
+                        className="btn btn-secondary"
+                        style={{ padding: '0.5rem 1.25rem' }}
+                        onClick={onCancel}
+                        disabled={deleting}
+                    >
+                        No
+                    </button>
+                    <button
+                        className="btn"
+                        style={{ padding: '0.5rem 1.25rem', background: '#ef4444', color: '#fff', border: '1px solid #ef4444' }}
+                        onClick={onConfirm}
+                        disabled={deleting}
+                    >
+                        {deleting ? 'Deleting…' : 'Yes, delete'}
+                    </button>
+                </div>
+            </div>
+        </div>,
+        document.body
+    );
+}
+
 /* ─── Saved Files view ──────────────────────────────────────────────────── */
 
-function FilesView({ files, loading, error, nowPlaying, loadingId, onPlay, onRefresh }) {
+function FilesView({ files, loading, error, nowPlaying, loadingId, onPlay, onDelete, onDownloadFile, onUploadClick, bulkUploading, canUpload }) {
+    const [selectedIds, setSelectedIds] = useState(new Set());
+    const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+    const [deletingBulk, setDeletingBulk] = useState(false);
+
+    const toggleSelect = useCallback((id) => {
+        setSelectedIds(prev => {
+            const next = new Set(prev);
+            if (next.has(id)) next.delete(id);
+            else next.add(id);
+            return next;
+        });
+    }, []);
+
+    const handleDownloadSelected = useCallback(async () => {
+        const selected = files.filter(f => selectedIds.has(f.id));
+        for (const f of selected) {
+            await onDownloadFile(f);
+        }
+    }, [files, selectedIds, onDownloadFile]);
+
+    const handleConfirmDelete = useCallback(async () => {
+        setDeletingBulk(true);
+        await Promise.allSettled(Array.from(selectedIds).map(id => onDelete(id)));
+        setSelectedIds(new Set());
+        setShowDeleteConfirm(false);
+        setDeletingBulk(false);
+    }, [selectedIds, onDelete]);
+
     const grouped = useMemo(() => {
         const g = {};
         for (const f of files) {
@@ -303,21 +353,62 @@ function FilesView({ files, loading, error, nowPlaying, loadingId, onPlay, onRef
         );
     }
 
-    if (!loading && files.length === 0 && !error) {
-        return (
-            <div style={{ textAlign: 'center', padding: '3rem 2rem' }}>
-                <div style={{ fontSize: '2.5rem', marginBottom: '1rem' }}>🎵</div>
-                <h3 style={{ marginBottom: '0.5rem' }}>Your library is empty</h3>
-                <p style={{ color: 'var(--text-secondary)', maxWidth: 400, margin: '0 auto' }}>
-                    Every time you use a tool (Stem Separator, SyncTag, etc.),
-                    the output files are automatically saved here.
-                </p>
-            </div>
-        );
-    }
-
     return (
         <div>
+            {/* Upload section */}
+            <div className="card" style={{
+                marginBottom: '1.5rem',
+                display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                gap: '1rem', flexWrap: 'wrap',
+            }}>
+                <p style={{ margin: 0, fontSize: '0.875rem', color: 'var(--text-secondary)' }}>
+                    Upload audio files directly to your library for AI similarity search.
+                </p>
+                <button
+                    className="btn btn-secondary"
+                    style={{ padding: '0.4rem 1rem', fontSize: '0.82rem', position: 'relative', whiteSpace: 'nowrap' }}
+                    disabled={bulkUploading}
+                    onClick={() => {
+                        if (!canUpload) {
+                            onUploadClick(); // This will trigger the premium check in parent
+                        } else {
+                            onUploadClick();
+                        }
+                    }}
+                >
+                    {bulkUploading ? '⏳ Uploading…' : '📤 Upload'}
+                    {!canUpload && (
+                        <span style={{
+                            marginLeft: '0.35rem', fontSize: '0.62rem',
+                            background: '#f59e0b', color: '#fff',
+                            borderRadius: 'var(--radius-full)', padding: '0.05rem 0.35rem', fontWeight: 700,
+                        }}>PREMIUM</span>
+                    )}
+                </button>
+            </div>
+
+            {selectedIds.size > 0 && (
+                <BulkSelectionBar
+                    count={selectedIds.size}
+                    onDownload={handleDownloadSelected}
+                    onRequestDelete={() => setShowDeleteConfirm(true)}
+                    onClear={() => setSelectedIds(new Set())}
+                />
+            )}
+
+            {/* Empty state */}
+            {!loading && files.length === 0 && !error && (
+                <div style={{ textAlign: 'center', padding: '3rem 2rem' }}>
+                    <div style={{ fontSize: '2.5rem', marginBottom: '1rem' }}>🎵</div>
+                    <h3 style={{ marginBottom: '0.5rem' }}>Your library is empty</h3>
+                    <p style={{ color: 'var(--text-secondary)', maxWidth: 400, margin: '0 auto' }}>
+                        Every time you use a tool (Stem Separator, SyncTag, etc.),
+                        the output files are automatically saved here.
+                    </p>
+                </div>
+            )}
+
+            {/* File groups */}
             {processTypes.map((pt) => {
                 const procMeta = PROCESS_META[pt] || { label: pt, icon: '🎵', color: '#888' };
                 const subOrder = PROCESS_SUBGROUP_ORDER[pt] || Object.keys(grouped[pt]);
@@ -365,6 +456,8 @@ function FilesView({ files, loading, error, nowPlaying, loadingId, onPlay, onRef
                                             isLoading={loadingId === f.id}
                                             accentColor={sgMeta.color}
                                             onPlay={() => onPlay(f, { autoPlay: true })}
+                                            selected={selectedIds.has(f.id)}
+                                            onSelect={() => toggleSelect(f.id)}
                                         />
                                     ))}
                                 </div>
@@ -373,221 +466,38 @@ function FilesView({ files, loading, error, nowPlaying, loadingId, onPlay, onRef
                     </div>
                 );
             })}
+
+            {showDeleteConfirm && (
+                <DeleteConfirmOverlay
+                    count={selectedIds.size}
+                    onConfirm={handleConfirmDelete}
+                    onCancel={() => setShowDeleteConfirm(false)}
+                    deleting={deletingBulk}
+                />
+            )}
         </div>
     );
 }
 
-/* ─── SearchPanel (inside Smart Graph view) ─────────────────────────────── */
+/* ─── Smart Search (standalone, no 3D graph) ─────────────────────────────── */
 
-function SearchPanel({ token, results, hasMore, searchLoading, onSearch, onLoadMore }) {
-    const [mode, setMode] = useState('audio'); // 'audio' | 'text'
+function SmartSearch({ token, onDelete, onDownloadFile }) {
     const [queryFile, setQueryFile] = useState(null);
-    const [queryText, setQueryText] = useState('');
+    const [results, setResults] = useState([]);
+    const [hasMore, setHasMore] = useState(false);
+    const [searching, setSearching] = useState(false);
     const [dragover, setDragover] = useState(false);
+    const [selectedIds, setSelectedIds] = useState(new Set());
+    const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+    const [deletingBulk, setDeletingBulk] = useState(false);
     const fileRef = useRef(null);
 
-    const canSearch = mode === 'audio' ? !!queryFile : !!queryText.trim();
-
-    const handleSearch = () => {
-        onSearch({ mode, file: queryFile, text: queryText, offset: 0 });
-    };
-
-    const handleLoadMore = () => {
-        onLoadMore({ mode, file: queryFile, text: queryText, offset: results.length });
-    };
-
-    return (
-        <div style={{
-            width: 300, minWidth: 280, flexShrink: 0,
-            display: 'flex', flexDirection: 'column', gap: '0.875rem',
-            padding: '1rem', background: 'rgba(255,255,255,0.96)',
-            borderRight: '1px solid var(--border)',
-            overflowY: 'auto',
-        }}>
-            <div>
-                <h4 style={{ margin: '0 0 0.5rem', fontSize: '0.9rem' }}>🔍 Similarity Search</h4>
-                <p style={{ fontSize: '0.78rem', color: 'var(--text-secondary)', margin: 0 }}>
-                    Find your most similar stored files using M2D-CLAP embeddings.
-                </p>
-            </div>
-
-            {/* Mode toggle */}
-            <div style={{ display: 'flex', gap: '0.375rem' }}>
-                {[['audio', '🎵 Audio'], ['text', '✏️ Text']].map(([m, label]) => (
-                    <button
-                        key={m}
-                        onClick={() => setMode(m)}
-                        className={`btn ${mode === m ? 'btn-primary' : 'btn-secondary'}`}
-                        style={{ flex: 1, padding: '0.35rem 0', fontSize: '0.78rem', justifyContent: 'center' }}
-                    >
-                        {label}
-                    </button>
-                ))}
-            </div>
-
-            {/* Input */}
-            {mode === 'audio' ? (
-                <div
-                    className={`upload-zone ${dragover ? 'dragover' : ''}`}
-                    style={{ minHeight: 80, padding: '0.75rem', cursor: 'pointer' }}
-                    onClick={() => fileRef.current?.click()}
-                    onDragOver={e => { e.preventDefault(); setDragover(true); }}
-                    onDragLeave={() => setDragover(false)}
-                    onDrop={e => { e.preventDefault(); setDragover(false); if (e.dataTransfer.files[0]) setQueryFile(e.dataTransfer.files[0]); }}
-                >
-                    <span className="icon" style={{ fontSize: '1.4rem' }}>🎵</span>
-                    <span className="label" style={{ fontSize: '0.78rem' }}>Drop audio or click</span>
-                    {queryFile && <span className="file-name" style={{ fontSize: '0.72rem' }}>{queryFile.name}</span>}
-                    <input ref={fileRef} type="file" hidden accept=".wav,.flac,.mp3,.aac,.aif,.aiff"
-                        onChange={e => e.target.files[0] && setQueryFile(e.target.files[0])} />
-                </div>
-            ) : (
-                <div>
-                    <textarea
-                        style={{
-                            width: '100%', minHeight: 72, resize: 'vertical',
-                            background: 'var(--bg-surface)', border: '1.5px solid var(--border)',
-                            borderRadius: 'var(--radius-sm)', padding: '0.6rem 0.75rem',
-                            fontSize: '0.85rem', color: 'var(--text-primary)',
-                            fontFamily: 'inherit', outline: 'none', boxSizing: 'border-box',
-                        }}
-                        placeholder='e.g. "dark trap drums" or "uplifting piano melody"'
-                        value={queryText}
-                        onChange={e => setQueryText(e.target.value)}
-                        onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); if (canSearch) handleSearch(); } }}
-                    />
-                </div>
-            )}
-
-            <button
-                className="btn btn-primary"
-                style={{ width: '100%', justifyContent: 'center', padding: '0.45rem' }}
-                disabled={!canSearch || searchLoading}
-                onClick={handleSearch}
-            >
-                {searchLoading ? '⏳ Searching…' : '🔍 Search'}
-            </button>
-
-            {/* Results */}
-            {results.length > 0 && (
-                <div>
-                    <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginBottom: '0.5rem' }}>
-                        {results.length} result{results.length !== 1 ? 's' : ''} — highlighted on graph
-                    </div>
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: '0.4rem' }}>
-                        {results.map((r, i) => {
-                            const proc = PROCESS_META[r.process_type] || {};
-                            return (
-                                <div key={r.id} style={{
-                                    background: 'var(--bg-surface)',
-                                    border: `1px solid ${proc.color || '#888'}44`,
-                                    borderRadius: 'var(--radius-sm)', padding: '0.55rem 0.65rem',
-                                    borderLeft: `3px solid ${proc.color || '#888'}`,
-                                }}>
-                                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
-                                        <span style={{ fontSize: '0.9rem' }}>{proc.icon || '🎵'}</span>
-                                        <span style={{ flex: 1, fontSize: '0.78rem', fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                                            {r.filename}
-                                        </span>
-                                        <span style={{
-                                            fontSize: '0.7rem', fontWeight: 700,
-                                            color: proc.color || '#888', whiteSpace: 'nowrap',
-                                        }}>
-                                            {(r.score * 100).toFixed(0)}%
-                                        </span>
-                                    </div>
-                                    <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)', marginTop: '0.2rem' }}>
-                                        {proc.label}{r.duration > 0 ? ` · ${fmtDur(r.duration)}` : ''}
-                                    </div>
-                                </div>
-                            );
-                        })}
-                    </div>
-
-                    {hasMore && (
-                        <button
-                            className="btn btn-secondary"
-                            style={{ width: '100%', marginTop: '0.6rem', fontSize: '0.8rem', padding: '0.4rem' }}
-                            disabled={searchLoading}
-                            onClick={handleLoadMore}
-                        >
-                            {searchLoading ? '⏳' : '+ 10 More'}
-                        </button>
-                    )}
-                </div>
-            )}
-        </div>
-    );
-}
-
-/* ─── SmartGraph view (premium) ─────────────────────────────────────────── */
-
-function SmartGraph({ token, nowPlaying, loadingId, onPlay, graphRefreshKey }) {
-    const [graphData, setGraphData] = useState(null);
-    const [graphLoading, setGraphLoading] = useState(true);
-    const [graphError, setGraphError] = useState('');
-
-    // Search state
-    const [allResults, setAllResults] = useState([]);
-    const [hasMore, setHasMore] = useState(false);
-    const [searchLoading, setSearchLoading] = useState(false);
-
-    // Highlighted node IDs (accumulates across +5 more fetches)
-    const highlightedIds = useMemo(() => new Set(allResults.map(r => r.id)), [allResults]);
-
-    // Refs for nodeThreeObject closure (avoids stale captures)
-    const highlightedIdsRef = useRef(highlightedIds);
-    const nowPlayingIdRef = useRef(nowPlaying?.id || null);
-    const graphRef = useRef(null);
-
-    // Keep refs in sync and refresh the graph on changes
-    useEffect(() => {
-        highlightedIdsRef.current = highlightedIds;
-        nowPlayingIdRef.current = nowPlaying?.id || null;
-        graphRef.current?.refresh();
-    }, [highlightedIds, nowPlaying?.id]);
-
-    // Fetch graph data on mount and whenever graphRefreshKey increments
-    useEffect(() => {
-        if (!token) return;
-        (async () => {
-            setGraphLoading(true);
-            setGraphError('');
-            try {
-                const resp = await fetch(`${API_BASE}/files/graph`, {
-                    headers: { Authorization: `Bearer ${token}` },
-                });
-                if (!resp.ok) throw new Error(`HTTP ${resp.status}: ${await resp.text()}`);
-                const data = await resp.json();
-                setGraphData(data);
-            } catch (e) {
-                setGraphError(e.message);
-            } finally {
-                setGraphLoading(false);
-            }
-        })();
-    }, [token, graphRefreshKey]);
-
-    // nodeThreeObject — reads from refs, never becomes stale
-    const nodeThreeObject = useCallback((node) => {
-        return makeNodeObj(
-            node,
-            highlightedIdsRef.current.has(node.id),
-            nowPlayingIdRef.current === node.id,
-        );
-    }, []);
-
-    const handleNodeClick = useCallback((node) => {
-        onPlay(node);
-    }, [onPlay]);
-
-    const handleSearch = useCallback(async ({ mode, file, text, offset }) => {
-        if (!token) return;
-        setSearchLoading(true);
+    const search = useCallback(async (offset = 0) => {
+        if (!token || !queryFile) return;
+        setSearching(true);
         try {
             const form = new FormData();
-            if (mode === 'audio' && file) form.append('audio', file);
-            else form.append('query_text', text);
+            form.append('audio', queryFile);
             form.append('offset', String(offset));
             form.append('limit', '10');
 
@@ -600,144 +510,167 @@ function SmartGraph({ token, nowPlaying, loadingId, onPlay, graphRefreshKey }) {
             const data = await resp.json();
 
             if (offset === 0) {
-                // New search: replace results
-                setAllResults(data.results || []);
+                setResults(data.results || []);
+                setSelectedIds(new Set());
             } else {
-                // Paginate: append (de-duplicate by id)
-                setAllResults(prev => {
+                setResults(prev => {
                     const seen = new Set(prev.map(r => r.id));
-                    const fresh = (data.results || []).filter(r => !seen.has(r.id));
-                    return [...prev, ...fresh];
+                    return [...prev, ...(data.results || []).filter(r => !seen.has(r.id))];
                 });
             }
             setHasMore(data.has_more || false);
         } catch (e) {
-            console.error('Search error:', e);
+            console.error('[SmartSearch] error:', e);
         } finally {
-            setSearchLoading(false);
+            setSearching(false);
         }
-    }, [token]);
+    }, [token, queryFile]);
 
-    const handleLoadMore = useCallback((params) => handleSearch(params), [handleSearch]);
+    const toggleSelect = useCallback((id) => {
+        setSelectedIds(prev => {
+            const next = new Set(prev);
+            if (next.has(id)) next.delete(id);
+            else next.add(id);
+            return next;
+        });
+    }, []);
 
-    // Link color / particle helpers
-    const linkColorFn = useCallback((link) => linkColor(link.similarity || 0), []);
-    const linkWidthFn = useCallback((link) => {
-        const s = link.similarity || 0;
-        return s >= 0.8 ? 1.2 : s >= 0.65 ? 0.7 : 0.3;
-    }, []);
-    const linkParticles = useCallback((link) => {
-        const src = typeof link.source === 'object' ? link.source.id : link.source;
-        const tgt = typeof link.target === 'object' ? link.target.id : link.target;
-        return (highlightedIdsRef.current.has(src) && highlightedIdsRef.current.has(tgt)) ? 5 : 0;
-    }, []);
+    const handleDownloadSelected = useCallback(async () => {
+        for (const r of results.filter(r => selectedIds.has(r.id))) {
+            await onDownloadFile(r);
+        }
+    }, [results, selectedIds, onDownloadFile]);
+
+    const handleConfirmDelete = useCallback(async () => {
+        setDeletingBulk(true);
+        const ids = Array.from(selectedIds);
+        await Promise.allSettled(ids.map(id => onDelete(id)));
+        setResults(prev => prev.filter(r => !selectedIds.has(r.id)));
+        setSelectedIds(new Set());
+        setShowDeleteConfirm(false);
+        setDeletingBulk(false);
+    }, [selectedIds, onDelete]);
 
     return (
-        <div style={{ display: 'flex', flex: 1, overflow: 'hidden', height: '100%' }}>
-            {/* Left: search panel */}
-            <SearchPanel
-                token={token}
-                results={allResults}
-                hasMore={hasMore}
-                searchLoading={searchLoading}
-                onSearch={handleSearch}
-                onLoadMore={handleLoadMore}
-            />
+        <div className="card fade-in">
+            <div style={{ maxWidth: 600, margin: '0 auto' }}>
+                <h3 style={{ margin: '0 0 0.4rem' }}>🔍 Smart Search</h3>
+                <p style={{ color: 'var(--text-secondary)', margin: '0 0 1.25rem', fontSize: '0.875rem' }}>
+                    Find the most similar files in your library using advanced AI embeddings.
+                </p>
 
-            {/* Right: 3D graph */}
-            <div style={{ flex: 1, background: '#0a0a18', position: 'relative', overflow: 'hidden' }}>
-                {graphLoading && (
-                    <div style={{
-                        position: 'absolute', inset: 0, display: 'flex',
-                        alignItems: 'center', justifyContent: 'center',
-                        color: '#8888cc', fontSize: '0.9rem',
-                    }} className="loading-pulse">
-                        Computing similarity graph…
-                    </div>
+                {/* Audio drop zone */}
+                <div
+                    className={`upload-zone ${dragover ? 'dragover' : ''}`}
+                    style={{ marginBottom: '1rem', cursor: 'pointer' }}
+                    onClick={() => fileRef.current?.click()}
+                    onDragOver={e => { e.preventDefault(); setDragover(true); }}
+                    onDragLeave={() => setDragover(false)}
+                    onDrop={e => {
+                        e.preventDefault(); setDragover(false);
+                        if (e.dataTransfer.files[0]) setQueryFile(e.dataTransfer.files[0]);
+                    }}
+                >
+                    <span className="icon" style={{ fontSize: '1.8rem' }}>🎵</span>
+                    <span className="label">Drop audio reference or click to browse</span>
+                    {queryFile && <span className="file-name">{queryFile.name}</span>}
+                    <input
+                        ref={fileRef} type="file" hidden
+                        accept=".wav,.flac,.mp3,.aac"
+                        onChange={e => e.target.files[0] && setQueryFile(e.target.files[0])}
+                    />
+                </div>
+
+                <button
+                    className="btn btn-primary"
+                    style={{ width: '100%', justifyContent: 'center', marginBottom: '1.5rem' }}
+                    disabled={searching}
+                    onClick={() => {
+                        if (!isPremiumUser) {
+                            onPremiumAction('AI Smart Search');
+                        } else if (queryFile) {
+                            search(0);
+                        }
+                    }}
+                >
+                    {searching ? '⏳ Searching…' : '🔍 Find Similar'}
+                </button>
+
+                {/* Bulk action bar */}
+                {selectedIds.size > 0 && (
+                    <BulkSelectionBar
+                        count={selectedIds.size}
+                        onDownload={handleDownloadSelected}
+                        onRequestDelete={() => setShowDeleteConfirm(true)}
+                        onClear={() => setSelectedIds(new Set())}
+                    />
                 )}
 
-                {graphError && (
-                    <div style={{
-                        position: 'absolute', inset: 0, display: 'flex',
-                        alignItems: 'center', justifyContent: 'center',
-                        color: '#ff6b6b', fontSize: '0.85rem', padding: '2rem', textAlign: 'center',
-                    }}>
-                        ❌ {graphError}
-                    </div>
-                )}
-
-                {!graphLoading && !graphError && graphData?.nodes?.length === 0 && (
-                    <div style={{
-                        position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column',
-                        alignItems: 'center', justifyContent: 'center', color: '#8888cc',
-                    }}>
-                        <div style={{ fontSize: '2.5rem', marginBottom: '0.75rem' }}>🕸️</div>
-                        <p style={{ fontSize: '0.9rem', maxWidth: 280, textAlign: 'center' }}>
-                            No files in your graph yet. Use any tool to start building your library.
-                        </p>
-                    </div>
-                )}
-
-                {!graphLoading && !graphError && graphData?.nodes?.length > 0 && (
-                    <Suspense fallback={
-                        <div style={{ color: '#8888cc', padding: '2rem', textAlign: 'center' }} className="loading-pulse">
-                            Loading 3D renderer…
+                {/* Results */}
+                {results.length > 0 && (
+                    <div>
+                        <div style={{ fontSize: '0.78rem', color: 'var(--text-muted)', marginBottom: '0.75rem', fontWeight: 600 }}>
+                            {results.length} result{results.length !== 1 ? 's' : ''} found
                         </div>
-                    }>
-                        <ForceGraph3D
-                            ref={graphRef}
-                            graphData={graphData}
-                            backgroundColor="#0a0a18"
-                            nodeLabel={n => `${n.filename}\n${(PROCESS_META[n.process_type] || {}).label || n.process_type}`}
-                            nodeThreeObject={nodeThreeObject}
-                            nodeThreeObjectExtend={false}
-                            linkColor={linkColorFn}
-                            linkWidth={linkWidthFn}
-                            linkOpacity={1}
-                            linkDirectionalParticles={linkParticles}
-                            linkDirectionalParticleWidth={1.5}
-                            linkDirectionalParticleSpeed={0.006}
-                            onNodeClick={handleNodeClick}
-                            cooldownTicks={180}
-                            onEngineStop={() => graphRef.current?.zoomToFit(600, 60)}
-                            enableNodeDrag={true}
-                            enableNavigationControls={true}
-                        />
-                    </Suspense>
-                )}
-
-                {/* Legend */}
-                {!graphLoading && !graphError && graphData?.nodes?.length > 0 && (
-                    <div style={{
-                        position: 'absolute', bottom: 12, right: 12,
-                        background: 'rgba(10,10,24,0.88)', border: '1px solid rgba(255,255,255,0.1)',
-                        borderRadius: 8, padding: '0.6rem 0.75rem', display: 'flex', flexDirection: 'column', gap: '0.3rem',
-                    }}>
-                        {Object.entries(PROCESS_META).map(([key, meta]) => (
-                            graphData.nodes.some(n => n.process_type === key) ? (
-                                <div key={key} style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', fontSize: '0.7rem' }}>
-                                    <div style={{ width: 8, height: 8, borderRadius: '50%', background: meta.color, flexShrink: 0 }} />
-                                    <span style={{ color: '#aaa' }}>{meta.label}</span>
+                        {results.map(r => {
+                            const proc = PROCESS_META[r.process_type] || { color: '#888', icon: '🎵', label: r.process_type };
+                            const isSelected = selectedIds.has(r.id);
+                            return (
+                                <div key={r.id} style={{
+                                    display: 'flex', alignItems: 'center', gap: '0.75rem',
+                                    background: isSelected ? `${proc.color}18` : 'var(--bg-surface)',
+                                    border: `1px solid ${isSelected ? proc.color + '66' : proc.color + '33'}`,
+                                    borderLeft: `3px solid ${proc.color}`,
+                                    borderRadius: 'var(--radius-sm)',
+                                    padding: '0.65rem 0.875rem',
+                                    marginBottom: '0.5rem',
+                                    transition: 'all 0.15s',
+                                }}>
+                                    <input
+                                        type="checkbox"
+                                        checked={isSelected}
+                                        onChange={() => toggleSelect(r.id)}
+                                        style={{ width: 15, height: 15, minWidth: 15, cursor: 'pointer', flexShrink: 0 }}
+                                    />
+                                    <span style={{ fontSize: '1rem', flexShrink: 0 }}>{proc.icon}</span>
+                                    <span style={{ flex: 1, fontWeight: 500, fontSize: '0.875rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', minWidth: 0 }}>
+                                        {r.filename}
+                                    </span>
+                                    <div style={{ display: 'flex', gap: '0.4rem', flexShrink: 0, alignItems: 'center' }}>
+                                        {r.duration > 0 && (
+                                            <span style={{ fontSize: '0.72rem', color: 'var(--text-secondary)', whiteSpace: 'nowrap' }}>
+                                                {fmtDur(r.duration)}
+                                            </span>
+                                        )}
+                                        <span style={{ fontSize: '0.78rem', fontWeight: 700, color: proc.color, whiteSpace: 'nowrap' }}>
+                                            {(r.score * 100).toFixed(0)}%
+                                        </span>
+                                    </div>
                                 </div>
-                            ) : null
-                        ))}
-                        <div style={{ borderTop: '1px solid rgba(255,255,255,0.1)', marginTop: '0.25rem', paddingTop: '0.25rem', display: 'flex', flexDirection: 'column', gap: '0.25rem' }}>
-                            <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', fontSize: '0.68rem' }}>
-                                <div style={{ width: 16, height: 2, background: 'rgba(0,255,136,0.7)', flexShrink: 0 }} />
-                                <span style={{ color: '#888' }}>High similarity</span>
-                            </div>
-                            <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', fontSize: '0.68rem' }}>
-                                <div style={{ width: 16, height: 2, background: 'rgba(0,200,255,0.5)', flexShrink: 0 }} />
-                                <span style={{ color: '#888' }}>Medium</span>
-                            </div>
-                            <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', fontSize: '0.68rem' }}>
-                                <div style={{ width: 16, height: 2, background: 'rgba(140,80,255,0.35)', flexShrink: 0 }} />
-                                <span style={{ color: '#888' }}>Low</span>
-                            </div>
-                        </div>
+                            );
+                        })}
+                        {hasMore && (
+                            <button
+                                className="btn btn-secondary"
+                                style={{ width: '100%', marginTop: '0.25rem' }}
+                                disabled={searching}
+                                onClick={() => search(results.length)}
+                            >
+                                {searching ? '⏳ Loading…' : '+ 10 More'}
+                            </button>
+                        )}
                     </div>
                 )}
             </div>
+
+            {showDeleteConfirm && (
+                <DeleteConfirmOverlay
+                    count={selectedIds.size}
+                    onConfirm={handleConfirmDelete}
+                    onCancel={() => setShowDeleteConfirm(false)}
+                    deleting={deletingBulk}
+                />
+            )}
         </div>
     );
 }
@@ -749,14 +682,14 @@ const PLANS = [
         id: 'standard',
         name: 'Standard',
         price: '$9.99 / mo',
-        desc: 'Unlimited use of all processing tools — no daily limits.',
+        desc: 'Unlimited use of all processing tools — no daily limits. Save up to 50 files.',
         color: '#7c3aed',
     },
     {
         id: 'premium',
         name: 'Premium',
         price: '$14.99 / mo',
-        desc: 'Everything in Standard + file storage, smart graph, and AI similarity search.',
+        desc: 'Everything in Standard + unlimited file storage, AI Smart Search, and bulk upload.',
         color: '#d97706',
         badge: 'Recommended',
     },
@@ -769,8 +702,8 @@ function UpgradeWall({ onSelectPlan }) {
                 <div style={{ fontSize: '3rem', marginBottom: '1rem' }}>🗂️</div>
                 <h2 style={{ marginBottom: '0.5rem' }}>My Files requires a subscription</h2>
                 <p style={{ color: 'var(--text-secondary)', maxWidth: 480, margin: '0 auto 2rem', fontSize: '0.95rem' }}>
-                    Every file you process is automatically saved and embedded into your personal audio graph.
-                    Upgrade to unlock access to your library and smart similarity search.
+                    Every file you process is automatically saved to your personal library.
+                    Upgrade to unlock access to your library and AI-powered similarity search.
                 </p>
 
                 <div style={{ display: 'flex', gap: '1.25rem', justifyContent: 'center', flexWrap: 'wrap' }}>
@@ -817,14 +750,116 @@ function UpgradeWall({ onSelectPlan }) {
     );
 }
 
+/* ─── Premium feature overlay ───────────────────────────────────────────── */
+
+function PremiumFeatureOverlay({ onClose, onUpgrade, featureName }) {
+    return createPortal(
+        <div className="modal-overlay" onClick={onClose} style={{ zIndex: 10001 }}>
+            <div
+                className="modal-content fade-in"
+                style={{
+                    maxWidth: '480px',
+                    padding: '2.5rem 2rem',
+                    textAlign: 'center',
+                    background: 'linear-gradient(135deg, var(--bg-card) 0%, #fff 100%)',
+                    borderRadius: 24,
+                    boxShadow: '0 20px 50px rgba(0,0,0,0.15)',
+                    position: 'relative'
+                }}
+                onClick={(e) => e.stopPropagation()}
+            >
+                <button
+                    className="modal-close"
+                    onClick={onClose}
+                    style={{ top: '1rem', right: '1rem', background: 'var(--bg-surface)', borderRadius: '50%', width: 32, height: 32 }}
+                >✕</button>
+
+                <div style={{
+                    fontSize: '4rem', marginBottom: '1.5rem',
+                    filter: 'drop-shadow(0 10px 15px rgba(217, 119, 6, 0.3))'
+                }}>💎</div>
+
+                <h2 style={{ fontSize: '1.8rem', marginBottom: '1rem', background: 'linear-gradient(to right, #d97706, #f59e0b)', WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent' }}>
+                    Premium Feature
+                </h2>
+
+                <p style={{ color: 'var(--text-secondary)', fontSize: '1.05rem', lineHeight: 1.6, marginBottom: '2rem' }}>
+                    {featureName} is reserved for <strong>Premium</strong> tier members.
+                    Unlock advanced AI capabilities and unlimited storage today.
+                </p>
+
+                <div style={{
+                    background: 'var(--bg-surface)',
+                    borderRadius: 16,
+                    padding: '1.5rem',
+                    textAlign: 'left',
+                    marginBottom: '2rem',
+                    border: '1px solid var(--border-bright)'
+                }}>
+                    <h4 style={{ margin: '0 0 1rem', fontSize: '0.9rem', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                        Premium Benefits:
+                    </h4>
+                    <ul style={{ listStyle: 'none', padding: 0, margin: 0, display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
+                        {[
+                            'Unlimited Smart Database Storage',
+                            'AI Smart Search & Retrieval',
+                            'Bulk File Uploads',
+                            'High-Priority Processing'
+                        ].map(benefit => (
+                            <li key={benefit} style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', fontSize: '0.95rem' }}>
+                                <span style={{ color: '#059669', fontWeight: 'bold' }}>✓</span>
+                                {benefit}
+                            </li>
+                        ))}
+                    </ul>
+                </div>
+
+                <div style={{ display: 'flex', gap: '1rem', flexDirection: 'column' }}>
+                    <button
+                        className="btn btn-primary"
+                        style={{
+                            width: '100%',
+                            padding: '1rem',
+                            fontSize: '1.1rem',
+                            fontWeight: 600,
+                            borderRadius: 12,
+                            background: '#d97706',
+                            borderColor: '#d97706',
+                            boxShadow: '0 4px 12px rgba(217, 119, 6, 0.4)'
+                        }}
+                        onClick={onUpgrade}
+                    >
+                        Join Premium — $14.99 / mo
+                    </button>
+                    <button
+                        className="btn btn-secondary"
+                        style={{ width: '100%', background: 'none', border: 'none', color: 'var(--text-muted)' }}
+                        onClick={onClose}
+                    >
+                        Maybe later
+                    </button>
+                </div>
+            </div>
+        </div>,
+        document.body
+    );
+}
+
 /* ─── Main component ────────────────────────────────────────────────────── */
 
 export default function MyFilesTab() {
     const { getToken, isSignedIn } = useAuth();
-    const { profile, openSubModal, setSubModalOpen } = useAuthContext();
-    const isPremium = !!profile?.subscription_active;
+    const { profile, openSubModal } = useAuthContext();
 
-    const [view, setView] = useState('files');        // 'files' | 'graph'
+    // isPremiumUser: must have both an active subscription AND premium tier
+    const isPremiumUser = !!(profile?.subscription_active && profile?.subscription_type === 'premium');
+    // canUpload: strictly premium only as per latest requirement
+    const canUpload = isPremiumUser;
+
+    const [premiumOverlayOpen, setPremiumOverlayOpen] = useState(false);
+    const [premiumFeature, setPremiumFeature] = useState('');
+
+    const [view, setView] = useState('files'); // 'files' | 'search'
     const [files, setFiles] = useState([]);
     const [filesLoading, setFilesLoading] = useState(false);
     const [filesError, setFilesError] = useState('');
@@ -839,7 +874,7 @@ export default function MyFilesTab() {
     const [nowPlaying, setNowPlaying] = useState(null); // {id, filename, process_type, subgroup, duration, blob, loading}
     const [loadingId, setLoadingId] = useState(null);
 
-    // Fetch files + token on mount / sign-in
+    // ── Fetch files + token ─────────────────────────────────────────────────
     const fetchFiles = useCallback(async () => {
         if (!isSignedIn) return;
         setFilesLoading(true);
@@ -862,7 +897,7 @@ export default function MyFilesTab() {
 
     useEffect(() => { fetchFiles(); }, [fetchFiles]);
 
-    // ── Background-embedding poller ────────────────────────────────────────
+    // ── Background-embedding poller ─────────────────────────────────────────
     // Processing tabs fire window.dispatchEvent(new CustomEvent('audioProcessed'))
     // and write localStorage.lastProcessedAt so this tab knows to start polling
     // until all background embeddings are committed to Qdrant.
@@ -870,19 +905,13 @@ export default function MyFilesTab() {
     const filesLengthRef = useRef(0);
     const pollingTimerRef = useRef(null);
     const stableCountRef = useRef(0);
-    const [graphRefreshKey, setGraphRefreshKey] = useState(0);
     const [isPolling, setIsPolling] = useState(false);
 
-    // Track file count changes: bump graphRefreshKey when new files arrive;
-    // stop polling when count is stable for 3 consecutive 4-second polls.
+    // Stop polling when count is stable for 3 consecutive 4-second polls.
     useEffect(() => {
         const prev = filesLengthRef.current;
         const next = files.length;
         if (next > prev) {
-            // New files arrived — trigger graph refresh if polling is active
-            if (pollingTimerRef.current !== null) {
-                setGraphRefreshKey(k => k + 1);
-            }
             stableCountRef.current = 0;
         } else if (pollingTimerRef.current !== null) {
             stableCountRef.current += 1;
@@ -924,12 +953,12 @@ export default function MyFilesTab() {
         return () => window.removeEventListener('audioProcessed', handler);
     }, [startPolling, isSignedIn]);
 
-    // Cleanup timer if the component unmounts
+    // Cleanup timer on unmount
     useEffect(() => () => {
         if (pollingTimerRef.current) clearInterval(pollingTimerRef.current);
     }, []);
 
-    // Load audio for a file (from either list or graph)
+    // ── Load audio for playback ─────────────────────────────────────────────
     const handlePlay = useCallback(async (file, { autoPlay = false } = {}) => {
         // If clicking the already-playing file, just surface the bar (don't re-fetch)
         if (nowPlaying?.id === file.id && !nowPlaying?.loading) return;
@@ -966,7 +995,7 @@ export default function MyFilesTab() {
         }
     }, [nowPlaying, token, getToken]);
 
-    // ── Flat ordered file list (matches FilesView render order) ───────────
+    // ── Flat ordered file list (matches FilesView render order) ─────────────
     const orderedFiles = useMemo(() => {
         const g = {};
         for (const f of files) {
@@ -991,7 +1020,7 @@ export default function MyFilesTab() {
         return flat;
     }, [files]);
 
-    // ── Navigate prev/next in the file list ───────────────────────────────
+    // ── Navigate prev/next in the file list ─────────────────────────────────
     const navigateFiles = useCallback((dir) => {
         if (orderedFiles.length === 0) return;
         // Stop every playing WaveformPlayer and native <audio> immediately.
@@ -1007,7 +1036,7 @@ export default function MyFilesTab() {
         });
     }, [orderedFiles, nowPlaying?.id, handlePlay]);
 
-    // ── Arrow-key navigation (only when Files sub-tab is visible) ─────────
+    // ── Arrow-key navigation (only when Saved Files sub-tab is visible) ──────
     useEffect(() => {
         if (view !== 'files') return;
         const onKey = (e) => {
@@ -1021,7 +1050,59 @@ export default function MyFilesTab() {
         return () => window.removeEventListener('keydown', onKey);
     }, [view, navigateFiles]);
 
-    // ── Bulk upload handler ────────────────────────────────────────────────
+    // ── Download a single file via authenticated fetch ───────────────────────
+    const downloadFile = useCallback(async (file) => {
+        try {
+            const t = token || await getToken();
+            const resp = await fetch(`${API_BASE}/files/${file.id}/audio`, {
+                headers: { Authorization: `Bearer ${t}` },
+            });
+            if (!resp.ok) throw new Error(`API ${resp.status}`);
+            const blob = await resp.blob();
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = file.filename;
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            URL.revokeObjectURL(url);
+        } catch (err) {
+            alert(`Failed to download ${file.filename}: ${err.message}`);
+        }
+    }, [token, getToken]);
+
+    // ── Delete a file (Qdrant + R2) ─────────────────────────────────────────
+    const deleteFile = useCallback(async (fileId) => {
+        try {
+            const t = token || await getToken();
+            const resp = await fetch(`${API_BASE}/files/${fileId}`, {
+                method: 'DELETE',
+                headers: { Authorization: `Bearer ${t}` },
+            });
+            if (!resp.ok) {
+                const text = await resp.text();
+                throw new Error(`API ${resp.status}: ${text}`);
+            }
+            // Optimistically remove from local state
+            setFiles(prev => prev.filter(f => f.id !== fileId));
+            // Close the player if this file was playing
+            if (nowPlaying?.id === fileId) setNowPlaying(null);
+        } catch (err) {
+            alert(`Failed to remove file: ${err.message}`);
+        }
+    }, [token, getToken, nowPlaying]);
+
+    // ── Bulk upload (standard+ — enforced by backend quota) ──────────────────
+    const handleUploadClick = useCallback(() => {
+        if (!isPremiumUser) {
+            setPremiumFeature('Bulk File Upload');
+            setPremiumOverlayOpen(true);
+            return;
+        }
+        bulkInputRef.current?.click();
+    }, [isPremiumUser]);
+
     const handleBulkUpload = useCallback(async (e) => {
         const selectedFiles = Array.from(e.target.files || []);
         if (selectedFiles.length === 0) return;
@@ -1059,6 +1140,8 @@ export default function MyFilesTab() {
         }
     }, [token, getToken, fetchFiles, startPolling]);
 
+    // ── Auth gates ───────────────────────────────────────────────────────────
+
     if (!isSignedIn) {
         return (
             <div className="fade-in">
@@ -1089,8 +1172,6 @@ export default function MyFilesTab() {
         return <UpgradeWall onSelectPlan={(planId) => openSubModal(planId)} />;
     }
 
-    const graphHeight = 'calc(100vh - var(--topbar-h) - 3rem)';
-
     return (
         <div className="fade-in" style={{ paddingBottom: nowPlaying ? 170 : 0 }}>
             {/* ── Header + sub-tab bar ──────────────────────────── */}
@@ -1101,7 +1182,9 @@ export default function MyFilesTab() {
                         <p style={{ color: 'var(--text-secondary)', margin: '0.2rem 0 0', fontSize: '0.85rem' }}>
                             {files.length === 0 && !filesLoading
                                 ? 'No files yet — use any tool to start building your library.'
-                                : `${files.length} file${files.length !== 1 ? 's' : ''} stored`}
+                                : isPremiumUser
+                                    ? `${files.length} file${files.length !== 1 ? 's' : ''} stored · unlimited`
+                                    : `${files.length} / 50 file${files.length !== 1 ? 's' : ''} stored`}
                             {isPolling && (
                                 <span className="loading-pulse" style={{ marginLeft: '0.5rem', color: 'var(--text-muted)' }}>
                                     · syncing…
@@ -1120,53 +1203,30 @@ export default function MyFilesTab() {
                             📂 Saved Files
                         </button>
 
-                        {/* Smart Graph sub-tab */}
+                        {/* Smart Search sub-tab (premium only) */}
                         <button
-                            className={`btn ${view === 'graph' ? 'btn-primary' : 'btn-secondary'}`}
+                            className={`btn ${view === 'search' ? 'btn-primary' : 'btn-secondary'}`}
                             style={{ padding: '0.4rem 1rem', fontSize: '0.82rem', position: 'relative' }}
                             onClick={() => {
-                                if (!isPremium) { openSubModal('premium'); return; }
-                                setView('graph');
+                                if (!isPremiumUser) {
+                                    setPremiumFeature('AI Smart Search');
+                                    setPremiumOverlayOpen(true);
+                                    return;
+                                }
+                                setView('search');
                             }}
                         >
-                            🕸️ Smart Graph
-                            {!isPremium && (
+                            🔍 Smart Search
+                            {!isPremiumUser && (
                                 <span style={{
                                     marginLeft: '0.35rem', fontSize: '0.62rem',
                                     background: '#f59e0b', color: '#fff',
                                     borderRadius: 'var(--radius-full)', padding: '0.05rem 0.35rem', fontWeight: 700,
-                                }}>PRO</span>
+                                }}>PREMIUM</span>
                             )}
                         </button>
 
-                        {/* Bulk Upload to Graph */}
-                        <button
-                            className="btn btn-secondary"
-                            style={{ padding: '0.4rem 1rem', fontSize: '0.82rem', position: 'relative' }}
-                            disabled={bulkUploading}
-                            onClick={() => {
-                                if (!isPremium) { openSubModal('premium'); return; }
-                                bulkInputRef.current?.click();
-                            }}
-                        >
-                            {bulkUploading ? '⏳ Uploading…' : '📤 Upload to Graph'}
-                            {!isPremium && (
-                                <span style={{
-                                    marginLeft: '0.35rem', fontSize: '0.62rem',
-                                    background: '#f59e0b', color: '#fff',
-                                    borderRadius: 'var(--radius-full)', padding: '0.05rem 0.35rem', fontWeight: 700,
-                                }}>PRO</span>
-                            )}
-                        </button>
-                        <input
-                            ref={bulkInputRef}
-                            type="file"
-                            multiple
-                            hidden
-                            accept=".wav,.flac,.mp3,.aac,.aif,.aiff,.ogg"
-                            onChange={handleBulkUpload}
-                        />
-
+                        {/* Refresh (only for Saved Files) */}
                         {view === 'files' && (
                             <button
                                 className="btn btn-secondary"
@@ -1180,6 +1240,7 @@ export default function MyFilesTab() {
                 </div>
             </div>
 
+            {/* ── Error / status banners ──────────────────────────── */}
             {filesError && (
                 <div className="card" style={{ marginBottom: '1.5rem' }}>
                     <p className="status-error">❌ {filesError}</p>
@@ -1195,7 +1256,7 @@ export default function MyFilesTab() {
                 </div>
             )}
 
-            {/* ── Saved Files view ─────────────────────────────────── */}
+            {/* ── Saved Files view ──────────────────────────────── */}
             {view === 'files' && (
                 <FilesView
                     files={files}
@@ -1204,28 +1265,50 @@ export default function MyFilesTab() {
                     nowPlaying={nowPlaying}
                     loadingId={loadingId}
                     onPlay={handlePlay}
-                    onRefresh={fetchFiles}
+                    onDelete={deleteFile}
+                    onDownloadFile={downloadFile}
+                    onUploadClick={handleUploadClick}
+                    bulkUploading={bulkUploading}
+                    canUpload={canUpload}
                 />
             )}
 
-            {/* ── Smart Graph view ─────────────────────────────────── */}
-            {view === 'graph' && isPremium && token && (
-                <div style={{
-                    height: graphHeight, display: 'flex', flexDirection: 'column',
-                    border: '1px solid var(--border)', borderRadius: 'var(--radius-md)',
-                    overflow: 'hidden', background: '#0a0a18',
-                }}>
-                    <SmartGraph
-                        token={token}
-                        nowPlaying={nowPlaying}
-                        loadingId={loadingId}
-                        onPlay={handlePlay}
-                        graphRefreshKey={graphRefreshKey}
-                    />
-                </div>
+            {/* ── Smart Search view (premium only) ─────────────── */}
+            {view === 'search' && isPremiumUser && token && (
+                <SmartSearch
+                    token={token}
+                    onDelete={deleteFile}
+                    onDownloadFile={downloadFile}
+                    isPremiumUser={isPremiumUser}
+                    onPremiumAction={(name) => {
+                        setPremiumFeature(name);
+                        setPremiumOverlayOpen(true);
+                    }}
+                />
             )}
 
-            {/* ── NowPlaying bar (portalled to document.body to escape CSS transforms) */}
+            {premiumOverlayOpen && (
+                <PremiumFeatureOverlay
+                    featureName={premiumFeature}
+                    onClose={() => setPremiumOverlayOpen(false)}
+                    onUpgrade={() => {
+                        setPremiumOverlayOpen(false);
+                        openSubModal('premium');
+                    }}
+                />
+            )}
+
+            {/* Hidden file input for bulk upload */}
+            <input
+                ref={bulkInputRef}
+                type="file"
+                multiple
+                hidden
+                accept=".wav,.flac,.mp3,.aac,.ogg"
+                onChange={handleBulkUpload}
+            />
+
+            {/* ── NowPlaying bar (portalled to document.body) ─── */}
             <NowPlayingBar
                 nowPlaying={nowPlaying}
                 onClose={() => setNowPlaying(null)}

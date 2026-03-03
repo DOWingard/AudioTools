@@ -157,6 +157,7 @@ function AppInner() {
                                     key={route.id}
                                     to={route.path}
                                     className={({ isActive }) => `tab-link ${isActive ? 'active' : ''}`}
+                                    onClick={() => window.dispatchEvent(new CustomEvent('waveform:stop-all'))}
                                 >
                                     {route.label}
                                 </NavLink>

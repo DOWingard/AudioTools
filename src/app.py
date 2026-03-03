@@ -72,7 +72,7 @@ def tag_track(audio_file: str, isrc: str, progress=gr.Progress()) -> tuple:
 
         audio_files = [
             p for p in tmp_dir.iterdir()
-            if p.suffix.lower() in {".wav", ".flac", ".mp3", ".aac", ".aif", ".aiff"}
+            if p.suffix.lower() in {".wav", ".flac", ".mp3", ".aac"}
         ]
         tagged_audio = str(audio_files[0]) if audio_files else None
 
@@ -268,7 +268,7 @@ with gr.Blocks(title="Audio Pipeline") as demo:
             with gr.Row():
                 sep_audio_input = gr.File(
                     label="Audio File (WAV / FLAC / MP3)",
-                    file_types=[".wav", ".flac", ".mp3", ".aac", ".aif", ".aiff"],
+                    file_types=[".wav", ".flac", ".mp3", ".aac"],
                 )
                 sep_run_btn = gr.Button("🔀 Separate Stems", variant="primary", size="lg")
 

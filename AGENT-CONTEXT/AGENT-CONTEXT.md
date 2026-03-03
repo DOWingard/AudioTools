@@ -76,7 +76,7 @@
 | `AudioCutterTab.jsx` | Waveform-based audio trimming |
 | `AudioJoinerTab.jsx` | Multi-file audio concatenation |
 | `KaraokeTab.jsx` | Vocal removal (instrumental extraction) |
-| `FormatConverterTab.jsx` | Audio format conversion (mp3/wav/flac/aiff/aac/m4a/ogg) |
+| `FormatConverterTab.jsx` | Audio format conversion (mp3/wav/flac/aac/m4a/ogg) |
 | `AudioAnalyzerTab.jsx` | BPM, key, loudness analysis |
 | `BpmKeyFinderTab.jsx` | Quick BPM + key detection |
 | `MyFilesTab.jsx` | File library, graph viz, similarity search (premium) |

@@ -751,7 +751,6 @@ AUDIO_MAGIC = {
     b"\xff\xfb": "mp3",     # MP3 without ID3
     b"\xff\xf3": "mp3",
     b"\xff\xf2": "mp3",
-    b"FORM": "aiff",        # AIFF
 }
 
 def _validate_audio_magic(path: Path) -> None:

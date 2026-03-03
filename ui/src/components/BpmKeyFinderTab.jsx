@@ -58,13 +58,13 @@ export default function BpmKeyFinderTab() {
                 >
                     <span className="icon">🎵</span>
                     <span className="label">Drop audio here or click to browse</span>
-                    <span className="hint">WAV, FLAC, MP3, AAC, AIF</span>
+                    <span className="hint">WAV, FLAC, MP3, AAC</span>
                     {file && <span className="file-name">{file.name}</span>}
                     <input
                         ref={fileRef}
                         type="file"
                         hidden
-                        accept=".wav,.flac,.mp3,.aac,.aif,.aiff"
+                        accept=".wav,.flac,.mp3,.aac"
                         onChange={(e) => e.target.files[0] && handleFile(e.target.files[0])}
                     />
                 </div>

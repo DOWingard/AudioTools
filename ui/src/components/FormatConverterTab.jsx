@@ -8,7 +8,6 @@ const FORMATS = [
     { id: 'mp3', label: 'MP3', desc: 'Lossy · universal' },
     { id: 'wav', label: 'WAV', desc: 'PCM · lossless' },
     { id: 'flac', label: 'FLAC', desc: 'Lossless · compressed' },
-    { id: 'aiff', label: 'AIFF', desc: 'PCM · Apple / DAW' },
     { id: 'aac', label: 'AAC', desc: 'Lossy · streaming' },
     { id: 'm4a', label: 'M4A', desc: 'AAC · iTunes / mobile' },
     { id: 'ogg', label: 'OGG', desc: 'Vorbis · open source' },
@@ -96,7 +95,7 @@ export default function FormatConverterTab() {
                         ref={fileRef}
                         type="file"
                         hidden
-                        accept="audio/*,.wav,.flac,.mp3,.aac,.aif,.aiff,.m4a,.wma,.aac"
+                        accept="audio/*,.wav,.flac,.mp3,.aac,.m4a,.wma,.aac"
                         onChange={(e) => e.target.files[0] && handleFile(e.target.files[0])}
                     />
                 </div>

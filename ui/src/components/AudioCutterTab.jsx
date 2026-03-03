@@ -28,6 +28,8 @@ export default function AudioCutterTab() {
     const [playing, setPlaying] = useState(false);
     const [currentTime, setCurrentTime] = useState(0);
     const [loading, setLoading] = useState(false);
+    const [progress, setProgress] = useState({ pct: 0, text: '' });
+    const creepRef = useRef(null);
     const [resultBlob, setResultBlob] = useState(null);
     const [resultName, setResultName] = useState('');
     const cutterIdRef = useRef(++_cutterInstanceId);
@@ -137,6 +139,7 @@ export default function AudioCutterTab() {
         return () => {
             window.removeEventListener('waveform:play-started', playHandler);
             window.removeEventListener('waveform:stop-all', stopHandler);
+            ws.pause();
             ws.destroy();
             wsRef.current = null;
             regionsRef.current = null;
@@ -176,9 +179,12 @@ export default function AudioCutterTab() {
     // ── Cut API call ──────────────────────────────────────────────────
     const run = async () => {
         if (!file) return;
+        window.dispatchEvent(new CustomEvent('waveform:stop-all'));
         setLoading(true);
         setError('');
-        setResultUrl(null);
+        setResultBlob(null);
+        clearInterval(creepRef.current);
+        setProgress({ pct: 10, text: 'Preparing audio…' });
 
         try {
             const form = new FormData();
@@ -188,16 +194,32 @@ export default function AudioCutterTab() {
 
             const token = await getToken();
             const headers = token ? { Authorization: `Bearer ${token}` } : {};
+
+            setProgress({ pct: 18, text: 'Uploading file…' });
+
+            let p = 18;
+            creepRef.current = setInterval(() => {
+                p = Math.min(p + 0.8, 72);
+                const text = p < 28 ? 'Uploading file…' : 'Processing trim…';
+                setProgress({ pct: p, text });
+                if (p >= 72) clearInterval(creepRef.current);
+            }, 350);
+
             const resp = await fetch(`${API_BASE}/cut`, { method: 'POST', body: form, headers });
+            clearInterval(creepRef.current);
             if (!resp.ok) throw new Error(`API ${resp.status}: ${await resp.text()}`);
+
+            setProgress({ pct: 82, text: 'Rendering result…' });
 
             const blob = await resp.blob();
             const name = `${file.name.replace(/\.\w+$/, '')}_trimmed.wav`;
             setResultBlob(blob);
             setResultName(name);
+            setProgress({ pct: 100, text: 'Trim complete!' });
             localStorage.setItem('lastProcessedAt', String(Date.now()));
             window.dispatchEvent(new CustomEvent('audioProcessed'));
         } catch (e) {
+            clearInterval(creepRef.current);
             setError(e.message);
         } finally {
             setLoading(false);
@@ -242,13 +264,13 @@ export default function AudioCutterTab() {
                 >
                     <span className="icon">✂️</span>
                     <span className="label">Drop audio here or click to browse</span>
-                    <span className="hint">WAV, FLAC, MP3, AAC, AIF</span>
+                    <span className="hint">WAV, FLAC, MP3, AAC</span>
                     {file && <span className="file-name">{file.name}</span>}
                     <input
                         ref={fileRef}
                         type="file"
                         hidden
-                        accept="audio/*,.wav,.flac,.mp3,.aac,.aif,.aiff"
+                        accept="audio/*,.wav,.flac,.mp3,.aac"
                         onChange={(e) => e.target.files[0] && handleFile(e.target.files[0])}
                     />
                 </div>
@@ -327,6 +349,15 @@ export default function AudioCutterTab() {
                 >
                     {loading ? '⏳ Cutting…' : '✂️ Cut Audio'}
                 </button>
+
+                {loading && (
+                    <div style={{ marginTop: '1rem' }}>
+                        <div className="progress-text loading-pulse">{progress.text}</div>
+                        <div className="progress-bar-wrapper">
+                            <div className="progress-bar-fill" style={{ width: `${progress.pct}%` }} />
+                        </div>
+                    </div>
+                )}
 
                 {error && <p className="status-error" style={{ marginTop: '1rem' }}>❌ {error}</p>}
 

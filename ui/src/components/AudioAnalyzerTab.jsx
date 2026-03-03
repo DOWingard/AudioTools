@@ -74,7 +74,7 @@ export default function AudioAnalyzerTab() {
                         ref={fileRef}
                         type="file"
                         hidden
-                        accept="audio/*,.wav,.flac,.mp3,.aac,.aif,.aiff,.m4a"
+                        accept="audio/*,.wav,.flac,.mp3,.aac,.m4a"
                         onChange={(e) => e.target.files[0] && handleFile(e.target.files[0])}
                     />
                 </div>

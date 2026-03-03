@@ -11,6 +11,7 @@ export default function KaraokeTab() {
     const [file, setFile] = useState(null);
     const [loading, setLoading] = useState(false);
     const [progress, setProgress] = useState({ pct: 0, text: '' });
+    const creepRef = useRef(null);
     const [resultBlob, setResultBlob] = useState(null);
     const [resultName, setResultName] = useState('');
     const [error, setError] = useState('');
@@ -25,10 +26,12 @@ export default function KaraokeTab() {
 
     const run = async () => {
         if (!file) return;
+        window.dispatchEvent(new CustomEvent('waveform:stop-all'));
         setLoading(true);
         setError('');
         setResultBlob(null);
-        setProgress({ pct: 10, text: 'Uploading to separation engine…' });
+        clearInterval(creepRef.current);
+        setProgress({ pct: 5, text: 'Validating audio format…' });
 
         try {
             const form = new FormData();
@@ -36,19 +39,36 @@ export default function KaraokeTab() {
 
             const token = await getToken();
             const headers = token ? { Authorization: `Bearer ${token}` } : {};
-            setProgress({ pct: 30, text: 'Removing vocals with Demucs AI…' });
+
+            setProgress({ pct: 12, text: 'Uploading audio file…' });
+
+            let p = 12;
+            creepRef.current = setInterval(() => {
+                p = Math.min(p + 0.35, 76);
+                const text = p < 22 ? 'Uploading audio file…'
+                    : p < 38 ? 'Analyzing audio channels…'
+                        : p < 52 ? 'Identifying source layers…'
+                            : p < 65 ? 'Separating audio sources…'
+                                : 'Reconstructing instrumental mix…';
+                setProgress({ pct: p, text });
+                if (p >= 76) clearInterval(creepRef.current);
+            }, 400);
+
             const resp = await fetch(`${API_BASE}/karaoke`, { method: 'POST', body: form, headers });
+            clearInterval(creepRef.current);
             if (!resp.ok) throw new Error(`API ${resp.status}: ${await resp.text()}`);
 
-            setProgress({ pct: 90, text: 'Finalizing instrumental track…' });
+            setProgress({ pct: 82, text: 'Receiving output file…' });
+
             const blob = await resp.blob();
             const name = `${file.name.replace(/\.\w+$/, '')}_karaoke.wav`;
             setResultBlob(blob);
             setResultName(name);
-            setProgress({ pct: 100, text: 'Done!' });
+            setProgress({ pct: 100, text: 'Vocal removal complete!' });
             localStorage.setItem('lastProcessedAt', String(Date.now()));
             window.dispatchEvent(new CustomEvent('audioProcessed'));
         } catch (e) {
+            clearInterval(creepRef.current);
             setError(e.message);
         } finally {
             setLoading(false);
@@ -69,7 +89,7 @@ export default function KaraokeTab() {
         <div className="fade-in">
             <div className="card" style={{ marginBottom: '2rem' }}>
                 <p style={{ color: 'var(--text-secondary)', marginBottom: '2rem', fontSize: '1.05rem' }}>
-                    Remove vocals from any song using AI-powered source separation. Get a clean instrumental / karaoke track instantly.
+                    Remove vocals from any song using automated source separation. Get a clean instrumental / karaoke track instantly.
                 </p>
 
                 <div
@@ -85,13 +105,13 @@ export default function KaraokeTab() {
                 >
                     <span className="icon">🎤</span>
                     <span className="label">Drop audio here or click to browse</span>
-                    <span className="hint">WAV, FLAC, MP3, AAC, AIF</span>
+                    <span className="hint">WAV, FLAC, MP3, AAC</span>
                     {file && <span className="file-name">{file.name}</span>}
                     <input
                         ref={fileRef}
                         type="file"
                         hidden
-                        accept=".wav,.flac,.mp3,.aac,.aif,.aiff"
+                        accept=".wav,.flac,.mp3,.aac"
                         onChange={(e) => e.target.files[0] && handleFile(e.target.files[0])}
                     />
                 </div>

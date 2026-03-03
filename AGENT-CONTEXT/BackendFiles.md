@@ -181,7 +181,6 @@ Each processing endpoint follows the same pattern:
 | mp3    | .mp3      | libmp3lame    | audio/mpeg   |
 | wav    | .wav      | pcm_s16le     | audio/wav    |
 | flac   | .flac     | flac          | audio/flac   |
-| aiff   | .aiff     | pcm_s16be     | audio/aiff   |
 | aac    | .aac      | aac           | audio/aac    |
 | m4a    | .m4a      | aac           | audio/mp4    |
 | ogg    | .ogg      | libvorbis     | audio/ogg    |

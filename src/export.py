@@ -12,7 +12,6 @@ Two industry-standard output formats produced after every pipeline run:
                      WAV   → RIFF LIST/INFO chunk  (visible in OS + DAWs)
                      MP3   → ID3v2.3               (universal)
                      FLAC  → Vorbis Comments       (universal)
-                     AIFF  → ID3v2                 (iTunes / Logic)
                      AAC   → iTunes/MP4 atoms      (universal)
 """
 
@@ -138,7 +137,6 @@ def write_tags_ffmpeg(
       WAV   → RIFF LIST/INFO chunk  (visible in OS, DAWs, sync CMS)
       MP3   → ID3v2.3
       FLAC  → Vorbis Comments
-      AIFF  → ID3 chunk
       AAC   → iTunes/MP4 atoms
 
     Parameters
@@ -228,7 +226,7 @@ def write_id3_tags(audio_path: Union[str, Path], result: dict) -> Path:
     """
     Embed metadata from *result* into *audio_path* in-place.
 
-    For ID3-capable containers (MP3, WAV, AIFF, AAC) native ID3v2 frames are
+    For ID3-capable containers (MP3, WAV, AAC) native ID3v2 frames are
     written.  For FLAC, equivalent Vorbis Comment keys are used.
 
     Parameters
@@ -256,8 +254,6 @@ def write_id3_tags(audio_path: Union[str, Path], result: dict) -> Path:
         _tag_vorbis(audio_path, meta, tags_summary, result)
     elif suffix in (".wav",):
         _tag_wav(audio_path, meta, tags_summary, result)
-    elif suffix in (".aif", ".aiff"):
-        _tag_aiff(audio_path, meta, tags_summary, result)
     else:
         # MP3, AAC, M4A and other ID3-capable containers
         _tag_id3(audio_path, meta, tags_summary, result)
@@ -265,7 +261,7 @@ def write_id3_tags(audio_path: Union[str, Path], result: dict) -> Path:
     return audio_path
 
 
-# ---- Shared ID3 frame writer (used by WAV, AIFF, and raw ID3 paths) ------ #
+# ---- Shared ID3 frame writer (used by WAV and raw ID3 paths) ------ #
 
 def _fill_id3_tags(tags, meta: dict, tags_summary: dict, result: dict) -> None:
     """Populate an ID3 tag object (mutagen.id3.ID3 or compatible) with SyncTag metadata."""
@@ -332,22 +328,6 @@ def _tag_wav(
     audio.save()
 
 
-# ---- AIFF (RIFF ID3  chunk) ---------------------------------------------- #
-
-def _tag_aiff(
-    audio_path: Path,
-    meta: dict,
-    tags_summary: dict,
-    result: dict,
-) -> None:
-    """Embed ID3 tags into an AIFF file using mutagen.aiff.AIFF."""
-    from mutagen.aiff import AIFF
-
-    audio = AIFF(str(audio_path))
-    if audio.tags is None:
-        audio.add_tags()
-    _fill_id3_tags(audio.tags, meta, tags_summary, result)
-    audio.save()
 
 
 # ---- ID3v2 (MP3 / AAC / M4A and other containers) ----------------------- #

@@ -18,6 +18,7 @@ export default function SyncTagTab() {
     const [genre, setGenre] = useState('');
     const [loading, setLoading] = useState(false);
     const [progress, setProgress] = useState({ pct: 0, text: '' });
+    const creepRef = useRef(null);
     const [result, setResult] = useState(null);   // { meta, audioBlob, audioName, csvBlob, csvName }
     const [error, setError] = useState('');
     const fileRef = useRef(null);
@@ -31,10 +32,12 @@ export default function SyncTagTab() {
 
     const run = async () => {
         if (!file) return;
+        window.dispatchEvent(new CustomEvent('waveform:stop-all'));
         setLoading(true);
         setError('');
         setResult(null);
-        setProgress({ pct: 10, text: 'Uploading to compute service…' });
+        clearInterval(creepRef.current);
+        setProgress({ pct: 5, text: 'Validating audio format…' });
 
         try {
             const form = new FormData();
@@ -48,16 +51,35 @@ export default function SyncTagTab() {
 
             const token = await getToken();
             const headers = token ? { Authorization: `Bearer ${token}` } : {};
+
+            let p = 5;
+            creepRef.current = setInterval(() => {
+                p = Math.min(p + 0.28, 76);
+                const text = p < 18 ? 'Uploading audio file…'
+                           : p < 32 ? 'Analyzing audio characteristics…'
+                           : p < 47 ? 'Identifying musical elements…'
+                           : p < 60 ? 'Classifying genre, mood, and tempo…'
+                           : p < 72 ? 'Generating sync licensing metadata…'
+                           : 'Writing metadata tags…';
+                setProgress({ pct: p, text });
+                if (p >= 76) clearInterval(creepRef.current);
+            }, 500);
+
             const resp = await fetch(`${API_BASE}/tag`, { method: 'POST', body: form, headers });
+            clearInterval(creepRef.current);
 
             if (!resp.ok) {
                 const text = await resp.text();
                 throw new Error(`API ${resp.status}: ${text}`);
             }
 
-            setProgress({ pct: 80, text: 'Extracting results…' });
+            setProgress({ pct: 80, text: 'Receiving tagged files…' });
 
-            const zip = await JSZip.loadAsync(await resp.arrayBuffer());
+            const rawZip = await resp.arrayBuffer();
+
+            setProgress({ pct: 88, text: 'Parsing metadata…' });
+
+            const zip = await JSZip.loadAsync(rawZip);
 
             // metadata.json
             const metaFile = zip.file('metadata.json');
@@ -76,18 +98,19 @@ export default function SyncTagTab() {
             // Tagged audio
             let audioBlob = null, audioName = null;
             for (const name of Object.keys(zip.files)) {
-                if (/\.(wav|flac|mp3|ogg|aiff?|m4a|aac)$/i.test(name)) {
+                if (/\.(wav|flac|mp3|ogg|m4a|aac)$/i.test(name)) {
                     audioBlob = await zip.files[name].async('blob');
                     audioName = name;
                     break;
                 }
             }
 
-            setProgress({ pct: 100, text: 'Done!' });
+            setProgress({ pct: 100, text: 'Analysis complete!' });
             setResult({ meta, audioBlob, audioName, csvBlob, csvName });
             localStorage.setItem('lastProcessedAt', String(Date.now()));
             window.dispatchEvent(new CustomEvent('audioProcessed'));
         } catch (e) {
+            clearInterval(creepRef.current);
             setError(e.message);
         } finally {
             setLoading(false);
@@ -107,7 +130,7 @@ export default function SyncTagTab() {
         <div className="fade-in">
             <div className="card" style={{ marginBottom: '2rem' }}>
                 <p style={{ color: 'var(--text-secondary)', marginBottom: '2rem', fontSize: '1.05rem' }}>
-                    Upload audio to auto-tag for sync licensing. Instantly analyze tracks through our LLM pipeline and receive a rich metadata summary, a tagged copy, and a CSV sidecar.
+                    Upload audio to auto-tag for sync licensing. Instantly analyze tracks and receive a rich metadata summary, a tagged copy, and a CSV sidecar.
                 </p>
 
                 <div className="two-col">
@@ -125,14 +148,13 @@ export default function SyncTagTab() {
                             }}
                         >
                             <span className="icon">🎵</span>
-                            <span className="label">Drop audio here or click to browse</span>
-                            <span className="hint">WAV, FLAC, MP3, AAC, AIF</span>
+                            <span className="hint">WAV, FLAC, MP3, AAC</span>
                             {file && <span className="file-name">{file.name}</span>}
                             <input
                                 ref={fileRef}
                                 type="file"
                                 hidden
-                                accept=".wav,.flac,.mp3,.aac,.aif,.aiff"
+                                accept=".wav,.flac,.mp3,.aac"
                                 onChange={(e) => e.target.files[0] && handleFile(e.target.files[0])}
                             />
                         </div>

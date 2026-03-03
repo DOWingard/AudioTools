@@ -94,6 +94,7 @@ export default function WaveformPlayer({ label, audioBlob, fileName, color, auto
         wsRef.current = ws;
 
         return () => {
+            ws.pause();
             ws.destroy();
             wsRef.current = null;
         };

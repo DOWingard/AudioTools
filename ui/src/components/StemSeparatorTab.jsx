@@ -36,6 +36,7 @@ export default function StemSeparatorTab() {
     const [file, setFile] = useState(null);
     const [loading, setLoading] = useState(false);
     const [progress, setProgress] = useState({ pct: 0, text: '' });
+    const creepRef = useRef(null);
     const [stems, setStems] = useState(null);   // Map<key, { blob, name }>
     const [zipBlob, setZipBlob] = useState(null);
     const [error, setError] = useState('');
@@ -53,12 +54,14 @@ export default function StemSeparatorTab() {
 
     const run = async () => {
         if (!file) return;
+        window.dispatchEvent(new CustomEvent('waveform:stop-all'));
         setLoading(true);
         setError('');
         setStems(null);
         setZipBlob(null);
         setStatus('');
-        setProgress({ pct: 5, text: 'Uploading to compute service…' });
+        clearInterval(creepRef.current);
+        setProgress({ pct: 5, text: 'Validating audio format…' });
 
         try {
             const form = new FormData();
@@ -66,17 +69,34 @@ export default function StemSeparatorTab() {
 
             const token = await getToken();
             const headers = token ? { Authorization: `Bearer ${token}` } : {};
+
+            let p = 5;
+            creepRef.current = setInterval(() => {
+                p = Math.min(p + 0.3, 78);
+                const text = p < 15 ? 'Uploading audio file…'
+                           : p < 28 ? 'Analyzing track structure…'
+                           : p < 45 ? 'Separating main stems…'
+                           : p < 62 ? 'Processing drum components…'
+                           : p < 72 ? 'Generating one-shots…'
+                           : 'Packaging results…';
+                setProgress({ pct: p, text });
+                if (p >= 78) clearInterval(creepRef.current);
+            }, 450);
+
             const resp = await fetch(`${API_BASE}/separate`, { method: 'POST', body: form, headers });
+            clearInterval(creepRef.current);
 
             if (!resp.ok) {
                 const text = await resp.text();
                 throw new Error(`API ${resp.status}: ${text}`);
             }
 
-            setProgress({ pct: 85, text: 'Extracting stems…' });
+            setProgress({ pct: 82, text: 'Receiving stem bundle…' });
 
             const rawZip = await resp.arrayBuffer();
             setZipBlob(new Blob([rawZip], { type: 'application/zip' }));
+
+            setProgress({ pct: 90, text: 'Extracting audio files…' });
 
             const zip = await JSZip.loadAsync(rawZip);
             const extracted = {};
@@ -88,12 +108,13 @@ export default function StemSeparatorTab() {
                 extracted[stem] = { blob, name };
             }
 
-            setProgress({ pct: 100, text: 'Done!' });
+            setProgress({ pct: 100, text: 'Separation complete!' });
             setStems(extracted);
             setStatus(`✅ Separated ${Object.keys(extracted).length} stems from ${file.name}`);
             localStorage.setItem('lastProcessedAt', String(Date.now()));
             window.dispatchEvent(new CustomEvent('audioProcessed'));
         } catch (e) {
+            clearInterval(creepRef.current);
             setError(e.message);
         } finally {
             setLoading(false);
@@ -157,13 +178,13 @@ export default function StemSeparatorTab() {
                     >
                         <span className="icon">🎵</span>
                         <span className="label">Drop audio here or click to browse</span>
-                        <span className="hint">WAV, FLAC, MP3, AAC, AIF</span>
+                        <span className="hint">WAV, FLAC, MP3, AAC</span>
                         {file && <span className="file-name">{file.name}</span>}
                         <input
                             ref={fileRef}
                             type="file"
                             hidden
-                            accept=".wav,.flac,.mp3,.aac,.aif,.aiff"
+                            accept=".wav,.flac,.mp3,.aac"
                             onChange={(e) => e.target.files[0] && handleFile(e.target.files[0])}
                         />
                     </div>

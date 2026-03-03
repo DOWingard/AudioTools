@@ -80,13 +80,13 @@ export default function AudioJoinerTab() {
                 >
                     <span className="icon">🔗</span>
                     <span className="label">Click to add audio files</span>
-                    <span className="hint">WAV, FLAC, MP3, AAC, AIF — add multiple</span>
+                    <span className="hint">WAV, FLAC, MP3, AAC — add multiple</span>
                     <input
                         ref={fileRef}
                         type="file"
                         hidden
                         multiple
-                        accept=".wav,.flac,.mp3,.aac,.aif,.aiff"
+                        accept=".wav,.flac,.mp3,.aac"
                         onChange={(e) => {
                             if (e.target.files.length) addFiles(e.target.files);
                             e.target.value = '';
