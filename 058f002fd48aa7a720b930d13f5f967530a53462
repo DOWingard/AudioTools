@@ -1,0 +1,25 @@
+ui/src/App.jsx
+  24faae0586be3744 36-37,43,47,52,58,149,156,199,222
+ui/src/index.css
+  24faae0586be3744 1-2,4-5,10-16,18-20,24,27,29-31,64,86,125,129,146,230,323,357,359,375,395,401,491-492,501,509,514,536,627,637,651,707,756-757,804,823,842-843,856-857,933,959,964,1181,1215,1257,1314-1315,1336,1395,1398,1452,1458,1490-1491
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.1.4",
+  "base_commit_sha": "058f002fd48aa7a720b930d13f5f967530a53462",
+  "prompts": {
+    "24faae0586be3744": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "b70c0fde-7cf4-4113-81ab-b6a3f3acfcd4",
+        "model": "claude-sonnet-4-6"
+      },
+      "human_author": "Derek Wingard <derekwingard@gmail.com>",
+      "messages": [],
+      "total_additions": 75,
+      "total_deletions": 72,
+      "accepted_lines": 74,
+      "overriden_lines": 0
+    }
+  }
+}
