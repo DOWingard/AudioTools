@@ -481,7 +481,8 @@ function FilesView({ files, loading, error, nowPlaying, loadingId, onPlay, onDel
 
 /* ─── Smart Search (standalone, no 3D graph) ─────────────────────────────── */
 
-function SmartSearch({ token, onDelete, onDownloadFile }) {
+function SmartSearch({ token, onDelete, onDownloadFile, isPremiumUser, onPremiumAction }) {
+    const { setIsProcessing } = useAuthContext();
     const [queryFile, setQueryFile] = useState(null);
     const [results, setResults] = useState([]);
     const [hasMore, setHasMore] = useState(false);
@@ -491,6 +492,11 @@ function SmartSearch({ token, onDelete, onDownloadFile }) {
     const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
     const [deletingBulk, setDeletingBulk] = useState(false);
     const fileRef = useRef(null);
+
+    useEffect(() => {
+        setIsProcessing(searching || deletingBulk);
+        return () => setIsProcessing(false);
+    }, [searching, deletingBulk, setIsProcessing]);
 
     const search = useCallback(async (offset = 0) => {
         if (!token || !queryFile) return;
@@ -849,7 +855,7 @@ function PremiumFeatureOverlay({ onClose, onUpgrade, featureName }) {
 
 export default function MyFilesTab() {
     const { getToken, isSignedIn } = useAuth();
-    const { profile, openSubModal, setFileCount } = useAuthContext();
+    const { profile, openSubModal, setFileCount, setIsProcessing } = useAuthContext();
 
     // isPremiumUser: must have both an active subscription AND premium tier
     const isPremiumUser = !!(profile?.subscription_active && profile?.subscription_type === 'premium');
@@ -869,6 +875,11 @@ export default function MyFilesTab() {
     const [bulkUploading, setBulkUploading] = useState(false);
     const [bulkStatus, setBulkStatus] = useState('');
     const bulkInputRef = useRef(null);
+
+    useEffect(() => {
+        setIsProcessing(bulkUploading);
+        return () => setIsProcessing(false);
+    }, [bulkUploading, setIsProcessing]);
 
     // NowPlaying state
     const [nowPlaying, setNowPlaying] = useState(null); // {id, filename, process_type, subgroup, duration, blob, loading}

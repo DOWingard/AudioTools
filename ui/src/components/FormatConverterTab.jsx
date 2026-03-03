@@ -1,6 +1,7 @@
 import { useState, useRef } from 'react';
 import { useAuth } from '@clerk/clerk-react';
-import { useGatedRun, useStorageGuard } from '../AuthContext.jsx';
+import { useAuthContext, useGatedRun, useStorageGuard, useConsumeUsage } from '../AuthContext.jsx';
+import { useEffect } from 'react';
 import StorageConfirmModal from './StorageConfirmModal.jsx';
 
 const API_BASE = '/api';
@@ -17,6 +18,8 @@ const FORMATS = [
 export default function FormatConverterTab() {
     const requireAuth = useGatedRun();
     const { checkBeforeProcess } = useStorageGuard();
+    const consumeUsage = useConsumeUsage();
+    const { profile, setIsProcessing } = useAuthContext();
     const { getToken } = useAuth();
     const [file, setFile] = useState(null);
     const [format, setFormat] = useState('mp3');
@@ -27,6 +30,11 @@ export default function FormatConverterTab() {
     const fileRef = useRef(null);
     const [dragover, setDragover] = useState(false);
     const [storageConfirmMsg, setStorageConfirmMsg] = useState(null);
+
+    useEffect(() => {
+        setIsProcessing(loading);
+        return () => setIsProcessing(false);
+    }, [loading, setIsProcessing]);
 
     const handleFile = (f) => {
         setFile(f);
@@ -55,6 +63,7 @@ export default function FormatConverterTab() {
             const headers = token ? { Authorization: `Bearer ${token}` } : {};
             const resp = await fetch(`${API_BASE}/convert`, { method: 'POST', body: form, headers });
             if (!resp.ok) throw new Error(`API ${resp.status}: ${await resp.text()}`);
+            await consumeUsage();
 
             const blob = await resp.blob();
             const ext = format;
@@ -117,6 +126,7 @@ export default function FormatConverterTab() {
                                 key={f.id}
                                 className={`format-option ${format === f.id ? 'active' : ''}`}
                                 onClick={() => setFormat(f.id)}
+                                disabled={loading}
                             >
                                 <span className="format-label">{f.label}</span>
                             </button>

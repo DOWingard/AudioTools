@@ -2,7 +2,7 @@ import { useState, useRef } from 'react';
 import JSZip from 'jszip';
 import { useAuth } from '@clerk/clerk-react';
 import WaveformPlayer from './WaveformPlayer.jsx';
-import { useGatedRun, useStorageGuard } from '../AuthContext.jsx';
+import { useAuthContext, useGatedRun, useStorageGuard, useConsumeUsage } from '../AuthContext.jsx';
 import StorageConfirmModal from './StorageConfirmModal.jsx';
 
 const API_BASE = '/api';
@@ -34,6 +34,8 @@ const GROUP_META = {
 export default function StemSeparatorTab() {
     const requireAuth = useGatedRun();
     const { checkBeforeProcess } = useStorageGuard();
+    const consumeUsage = useConsumeUsage();
+    const { profile, setIsProcessing } = useAuthContext();
     const { getToken } = useAuth();
     const [file, setFile] = useState(null);
     const [loading, setLoading] = useState(false);
@@ -46,6 +48,11 @@ export default function StemSeparatorTab() {
     const fileRef = useRef(null);
     const [dragover, setDragover] = useState(false);
     const [storageConfirmMsg, setStorageConfirmMsg] = useState(null);
+
+    useEffect(() => {
+        setIsProcessing(loading);
+        return () => setIsProcessing(false);
+    }, [loading, setIsProcessing]);
 
     const handleFile = (f) => {
         setFile(f);
@@ -83,11 +90,11 @@ export default function StemSeparatorTab() {
             creepRef.current = setInterval(() => {
                 p = Math.min(p + 0.3, 78);
                 const text = p < 15 ? 'Uploading audio file…'
-                           : p < 28 ? 'Analyzing track structure…'
-                           : p < 45 ? 'Separating main stems…'
-                           : p < 62 ? 'Processing drum components…'
-                           : p < 72 ? 'Generating one-shots…'
-                           : 'Packaging results…';
+                    : p < 28 ? 'Analyzing track structure…'
+                        : p < 45 ? 'Separating main stems…'
+                            : p < 62 ? 'Processing drum components…'
+                                : p < 72 ? 'Generating one-shots…'
+                                    : 'Packaging results…';
                 setProgress({ pct: p, text });
                 if (p >= 78) clearInterval(creepRef.current);
             }, 450);
@@ -99,6 +106,7 @@ export default function StemSeparatorTab() {
                 const text = await resp.text();
                 throw new Error(`API ${resp.status}: ${text}`);
             }
+            await consumeUsage();
 
             setProgress({ pct: 82, text: 'Receiving stem bundle…' });
 

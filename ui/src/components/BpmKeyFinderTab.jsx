@@ -1,14 +1,21 @@
-import { useState, useRef } from 'react';
+import { useState, useRef, useEffect } from 'react';
+import { useAuthContext } from '../AuthContext.jsx';
 
 const API_BASE = '/api';
 
 export default function BpmKeyFinderTab() {
+    const { setIsProcessing } = useAuthContext();
     const [file, setFile] = useState(null);
     const [loading, setLoading] = useState(false);
     const [result, setResult] = useState(null);
     const [error, setError] = useState('');
     const fileRef = useRef(null);
     const [dragover, setDragover] = useState(false);
+
+    useEffect(() => {
+        setIsProcessing(loading);
+        return () => setIsProcessing(false);
+    }, [loading, setIsProcessing]);
 
     const handleFile = (f) => {
         setFile(f);

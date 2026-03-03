@@ -9,8 +9,9 @@
 | Context Area | File | Description |
 |--------------|------|-------------|
 | **Backend System** | [`BackendFiles.md`](BackendFiles.md) | Full reference for embedding pipeline, file storage (R2/MinIO), Qdrant vector DB, auth service, streaming, and all API endpoints. |
-| **Backend Execution** | [`BackendExecution.md`](BackendExecution.md) | Async/threading failure patterns: UploadFile iteration, background task pitfalls, sync-vs-async compatibility. |
+| **Backend Execution** | [`BackendExecution.md`](BackendExecution.md) | Async/threading failure patterns: UploadFile iteration, blocking subprocess in async routes, sync-vs-async compatibility. |
 | **Infrastructure / Env** | [`InfrastructureEnv.md`](InfrastructureEnv.md) | Docker build/deploy mismatches, env var loading, stale container images, service networking. |
+| **Frontend / Client** | [`FrontendClient.md`](FrontendClient.md) | React hook bugs, auth state management, client-side quota gate logic (`useGatedRun`, `useConsumeUsage`). |
 
 ---
 
@@ -116,6 +117,7 @@
 | Webhook returns 200 but no log output / no DB change | [`InfrastructureEnv.md`](InfrastructureEnv.md) — stale Docker image |
 | Subscription gate not working | `auth/main.py` (L183–199), `api/main.py` (L1350–1371) |
 | Free-tier quota not enforcing | `auth/main.py` (L202–240) |
+| Quota consumed on API failure (free tier) | [`FrontendClient.md`](FrontendClient.md) — `useGatedRun` / `useConsumeUsage` |
 | Audio processing error (ffmpeg) | `api/main.py` (endpoint-specific), `src/separate.py` |
 | Stem separator permission denied | `api/main.py` (L468–535), Dockerfile.compute (HOME dir) |
 | UI not rendering / component crash | `ui/src/App.jsx`, specific component in `ui/src/components/` |
@@ -124,6 +126,7 @@
 | Graph viz broken (3D) | `api/main.py` (L1453–1562), `MyFilesTab.jsx` |
 | Streaming playback failure | `api/main.py` (L1272–1343) |
 | `UploadFile` async iteration 500 in tests | [`BackendExecution.md`](BackendExecution.md) |
+| Blocking `subprocess.run` in async route | [`BackendExecution.md`](BackendExecution.md) — Bug #2 |
 
 ---
 

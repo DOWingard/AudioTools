@@ -119,7 +119,7 @@ const ROUTES = [
 function AppInner() {
     const { isSignedIn } = useUser();
     const { getToken } = useAuth();
-    const { profile, setProfile, subModalOpen, setSubModalOpen, limitModalOpen, closeLimitModal } = useAuthContext();
+    const { profile, setProfile, subModalOpen, setSubModalOpen, limitModalOpen, closeLimitModal, isProcessing } = useAuthContext();
 
     // Fetch/provision user record on sign-in
     useEffect(() => {
@@ -142,7 +142,7 @@ function AppInner() {
 
     return (
         <Router>
-            <div className="app-shell">
+            <div className={`app-shell ${isProcessing ? 'processing-active' : ''}`}>
                 {/* ── Top Bar ─────────────────────────────────── */}
                 <header className="top-bar">
                     <div className="top-bar-inner">

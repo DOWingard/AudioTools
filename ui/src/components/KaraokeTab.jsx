@@ -1,7 +1,7 @@
 import { useState, useRef } from 'react';
 import { useAuth } from '@clerk/clerk-react';
 import WaveformPlayer from './WaveformPlayer.jsx';
-import { useGatedRun, useStorageGuard } from '../AuthContext.jsx';
+import { useAuthContext, useGatedRun, useStorageGuard, useConsumeUsage } from '../AuthContext.jsx';
 import StorageConfirmModal from './StorageConfirmModal.jsx';
 
 const API_BASE = '/api';
@@ -9,6 +9,8 @@ const API_BASE = '/api';
 export default function KaraokeTab() {
     const requireAuth = useGatedRun();
     const { checkBeforeProcess } = useStorageGuard();
+    const consumeUsage = useConsumeUsage();
+    const { profile, setIsProcessing } = useAuthContext();
     const { getToken } = useAuth();
     const [file, setFile] = useState(null);
     const [loading, setLoading] = useState(false);
@@ -20,6 +22,11 @@ export default function KaraokeTab() {
     const fileRef = useRef(null);
     const [dragover, setDragover] = useState(false);
     const [storageConfirmMsg, setStorageConfirmMsg] = useState(null);
+
+    useEffect(() => {
+        setIsProcessing(loading);
+        return () => setIsProcessing(false);
+    }, [loading, setIsProcessing]);
 
     const handleFile = (f) => {
         setFile(f);
@@ -66,6 +73,7 @@ export default function KaraokeTab() {
             const resp = await fetch(`${API_BASE}/karaoke`, { method: 'POST', body: form, headers });
             clearInterval(creepRef.current);
             if (!resp.ok) throw new Error(`API ${resp.status}: ${await resp.text()}`);
+            await consumeUsage();
 
             setProgress({ pct: 82, text: 'Receiving output file…' });
 

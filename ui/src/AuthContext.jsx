@@ -22,10 +22,13 @@ export function AuthProvider({ children }) {
         setSubModalOpen(true);
     }, []);
 
+    const [isProcessing, setIsProcessing] = useState(false);
+
     return (
         <AuthContext.Provider value={{
             signInOpen, openSignIn, closeSignIn,
             limitModalOpen, openLimitModal, closeLimitModal,
+            isProcessing, setIsProcessing,
             subModalOpen, setSubModalOpen, subModalPlan, setSubModalPlan, openSubModal,
             profile, setProfile,
             fileCount, setFileCount,
@@ -42,11 +45,11 @@ export function useAuthContext() {
 /**
  * Returns a wrapper: if signed out → opens sign-in modal.
  * If signed in but quota exhausted → opens limit modal.
- * Otherwise consumes one free use and runs fn.
+ * Otherwise runs fn. Quota consumption happens inside run() after API success.
  */
 export function useGatedRun() {
-    const { isSignedIn, getToken } = useAuth();
-    const { openSignIn, openLimitModal, profile, setProfile } = useAuthContext();
+    const { isSignedIn } = useAuth();
+    const { openSignIn, openLimitModal, profile } = useAuthContext();
 
     return function gatedRun(fn) {
         return async (...args) => {
@@ -60,32 +63,43 @@ export function useGatedRun() {
                 return fn(...args);
             }
 
-            try {
-                const token = await getToken();
-                const resp = await fetch('/auth/usage/consume', {
-                    method: 'POST',
-                    headers: { Authorization: `Bearer ${token}` },
-                });
-                if (!resp.ok) throw new Error(`Usage check failed: ${resp.status}`);
-                const { allowed, remaining } = await resp.json();
-
-                if (!allowed) {
-                    openLimitModal();
-                    return;
-                }
-
-                // Update displayed count immediately
-                if (remaining !== null && profile) {
-                    setProfile((prev) => ({ ...prev, daily_free_downloads: remaining }));
-                }
-            } catch (e) {
-                console.error('Usage consume error', e);
-                // Fail open — let the user proceed if the check itself errored
+            // Client-side quota check — authoritative consume happens inside run() after API success
+            if (profile?.daily_free_downloads <= 0) {
+                openLimitModal();
+                return;
             }
 
             return fn(...args);
         };
     };
+}
+
+/**
+ * Returns an async function that consumes one free-tier use and updates the
+ * displayed counter. Call this inside run() only after the API responds OK,
+ * so failures never decrement the quota.
+ */
+export function useConsumeUsage() {
+    const { getToken } = useAuth();
+    const { profile, setProfile } = useAuthContext();
+
+    return useCallback(async () => {
+        if (!profile || profile.subscription_active) return;
+        try {
+            const token = await getToken();
+            const resp = await fetch('/auth/usage/consume', {
+                method: 'POST',
+                headers: { Authorization: `Bearer ${token}` },
+            });
+            if (!resp.ok) return;
+            const { remaining } = await resp.json();
+            if (remaining !== null) {
+                setProfile((prev) => ({ ...prev, daily_free_downloads: remaining }));
+            }
+        } catch (e) {
+            console.error('Usage consume error', e);
+        }
+    }, [getToken, profile, setProfile]);
 }
 
 const STANDARD_FILE_LIMIT = 50;

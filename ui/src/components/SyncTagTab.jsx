@@ -2,7 +2,7 @@ import { useState, useRef } from 'react';
 import JSZip from 'jszip';
 import { useAuth } from '@clerk/clerk-react';
 import WaveformPlayer from './WaveformPlayer.jsx';
-import { useGatedRun, useStorageGuard } from '../AuthContext.jsx';
+import { useAuthContext, useGatedRun, useStorageGuard, useConsumeUsage } from '../AuthContext.jsx';
 import StorageConfirmModal from './StorageConfirmModal.jsx';
 
 const API_BASE = '/api';
@@ -10,6 +10,8 @@ const API_BASE = '/api';
 export default function SyncTagTab() {
     const requireAuth = useGatedRun();
     const { checkBeforeProcess } = useStorageGuard();
+    const consumeUsage = useConsumeUsage();
+    const { profile, setIsProcessing } = useAuthContext();
     const { getToken } = useAuth();
     const [file, setFile] = useState(null);
     const [title, setTitle] = useState('');
@@ -26,6 +28,11 @@ export default function SyncTagTab() {
     const fileRef = useRef(null);
     const [dragover, setDragover] = useState(false);
     const [storageConfirmMsg, setStorageConfirmMsg] = useState(null);
+
+    useEffect(() => {
+        setIsProcessing(loading);
+        return () => setIsProcessing(false);
+    }, [loading, setIsProcessing]);
 
     const handleFile = (f) => {
         setFile(f);
@@ -65,11 +72,11 @@ export default function SyncTagTab() {
             creepRef.current = setInterval(() => {
                 p = Math.min(p + 0.28, 76);
                 const text = p < 18 ? 'Uploading audio file…'
-                           : p < 32 ? 'Analyzing audio characteristics…'
-                           : p < 47 ? 'Identifying musical elements…'
-                           : p < 60 ? 'Classifying genre, mood, and tempo…'
-                           : p < 72 ? 'Generating sync licensing metadata…'
-                           : 'Writing metadata tags…';
+                    : p < 32 ? 'Analyzing audio characteristics…'
+                        : p < 47 ? 'Identifying musical elements…'
+                            : p < 60 ? 'Classifying genre, mood, and tempo…'
+                                : p < 72 ? 'Generating sync licensing metadata…'
+                                    : 'Writing metadata tags…';
                 setProgress({ pct: p, text });
                 if (p >= 76) clearInterval(creepRef.current);
             }, 500);
@@ -81,6 +88,7 @@ export default function SyncTagTab() {
                 const text = await resp.text();
                 throw new Error(`API ${resp.status}: ${text}`);
             }
+            await consumeUsage();
 
             setProgress({ pct: 80, text: 'Receiving tagged files…' });
 
@@ -176,6 +184,7 @@ export default function SyncTagTab() {
                                     placeholder="Song title"
                                     value={title}
                                     onChange={(e) => setTitle(e.target.value)}
+                                    disabled={loading}
                                 />
                             </div>
                             <div>
@@ -185,6 +194,7 @@ export default function SyncTagTab() {
                                     placeholder="Artist name"
                                     value={artist}
                                     onChange={(e) => setArtist(e.target.value)}
+                                    disabled={loading}
                                 />
                             </div>
                             <div>
@@ -194,6 +204,7 @@ export default function SyncTagTab() {
                                     placeholder="Album name"
                                     value={album}
                                     onChange={(e) => setAlbum(e.target.value)}
+                                    disabled={loading}
                                 />
                             </div>
                             <div>
@@ -203,6 +214,7 @@ export default function SyncTagTab() {
                                     placeholder="e.g. Electronic"
                                     value={genre}
                                     onChange={(e) => setGenre(e.target.value)}
+                                    disabled={loading}
                                 />
                             </div>
                             <div>
@@ -215,6 +227,7 @@ export default function SyncTagTab() {
                                     placeholder="e.g. 128"
                                     value={bpm}
                                     onChange={(e) => setBpm(e.target.value)}
+                                    disabled={loading}
                                 />
                             </div>
                             <div>
@@ -224,6 +237,7 @@ export default function SyncTagTab() {
                                     placeholder="e.g. GB-ABC-25-00001"
                                     value={isrc}
                                     onChange={(e) => setIsrc(e.target.value)}
+                                    disabled={loading}
                                 />
                             </div>
                         </div>

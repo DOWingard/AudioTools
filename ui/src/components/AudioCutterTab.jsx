@@ -2,7 +2,7 @@ import { useState, useRef, useEffect, useCallback } from 'react';
 import WaveSurfer from 'wavesurfer.js';
 import RegionsPlugin from 'wavesurfer.js/dist/plugins/regions.esm.js';
 import { useAuth } from '@clerk/clerk-react';
-import { useGatedRun, useStorageGuard } from '../AuthContext.jsx';
+import { useAuthContext, useGatedRun, useStorageGuard, useConsumeUsage } from '../AuthContext.jsx';
 import WaveformPlayer from './WaveformPlayer.jsx';
 import StorageConfirmModal from './StorageConfirmModal.jsx';
 
@@ -21,6 +21,8 @@ function fmtTime(sec) {
 export default function AudioCutterTab() {
     const requireAuth = useGatedRun();
     const { checkBeforeProcess } = useStorageGuard();
+    const consumeUsage = useConsumeUsage();
+    const { profile, setIsProcessing } = useAuthContext();
     const { getToken } = useAuth();
     const [file, setFile] = useState(null);
     const [audioBlob, setAudioBlob] = useState(null);
@@ -39,6 +41,11 @@ export default function AudioCutterTab() {
     const fileRef = useRef(null);
     const [dragover, setDragover] = useState(false);
     const [storageConfirmMsg, setStorageConfirmMsg] = useState(null);
+
+    useEffect(() => {
+        setIsProcessing(loading);
+        return () => setIsProcessing(false);
+    }, [loading, setIsProcessing]);
 
     const waveContainerRef = useRef(null);
     const wsRef = useRef(null);
@@ -217,6 +224,7 @@ export default function AudioCutterTab() {
             const resp = await fetch(`${API_BASE}/cut`, { method: 'POST', body: form, headers });
             clearInterval(creepRef.current);
             if (!resp.ok) throw new Error(`API ${resp.status}: ${await resp.text()}`);
+            await consumeUsage();
 
             setProgress({ pct: 82, text: 'Rendering result…' });
 
@@ -333,6 +341,7 @@ export default function AudioCutterTab() {
                             placeholder="0.0"
                             value={start}
                             onChange={(e) => setStart(e.target.value)}
+                            disabled={loading}
                         />
                     </div>
                     <div className="time-input-group">
@@ -345,6 +354,7 @@ export default function AudioCutterTab() {
                             placeholder="End of file"
                             value={end}
                             onChange={(e) => setEnd(e.target.value)}
+                            disabled={loading}
                         />
                     </div>
                 </div>

@@ -1003,7 +1003,14 @@ async def convert_audio(
         cmd += spec["extra"]
         cmd.append(str(output_path))
 
-        subprocess.run(cmd, capture_output=True, check=True)
+        proc = await asyncio.create_subprocess_exec(
+            *cmd,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        _, stderr = await proc.communicate()
+        if proc.returncode != 0:
+            raise subprocess.CalledProcessError(proc.returncode, cmd, stderr=stderr)
 
         # Persist + schedule embedding if authenticated and subscribed
         if user_id:

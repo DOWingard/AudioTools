@@ -1,6 +1,7 @@
 import { useState, useRef } from 'react';
 import { useAuth } from '@clerk/clerk-react';
-import { useGatedRun, useStorageGuard } from '../AuthContext.jsx';
+import { useAuthContext, useGatedRun, useStorageGuard, useConsumeUsage } from '../AuthContext.jsx';
+import { useEffect } from 'react';
 import StorageConfirmModal from './StorageConfirmModal.jsx';
 
 const API_BASE = '/api';
@@ -8,6 +9,8 @@ const API_BASE = '/api';
 export default function AudioJoinerTab() {
     const requireAuth = useGatedRun();
     const { checkBeforeProcess } = useStorageGuard();
+    const consumeUsage = useConsumeUsage();
+    const { profile, setIsProcessing } = useAuthContext();
     const { getToken } = useAuth();
     const [files, setFiles] = useState([]);
     const [loading, setLoading] = useState(false);
@@ -15,6 +18,11 @@ export default function AudioJoinerTab() {
     const [error, setError] = useState('');
     const fileRef = useRef(null);
     const [storageConfirmMsg, setStorageConfirmMsg] = useState(null);
+
+    useEffect(() => {
+        setIsProcessing(loading);
+        return () => setIsProcessing(false);
+    }, [loading, setIsProcessing]);
 
     const addFiles = (newFiles) => {
         setFiles((prev) => [...prev, ...Array.from(newFiles)]);
@@ -56,6 +64,7 @@ export default function AudioJoinerTab() {
             const headers = token ? { Authorization: `Bearer ${token}` } : {};
             const resp = await fetch(`${API_BASE}/join`, { method: 'POST', body: form, headers });
             if (!resp.ok) throw new Error(`API ${resp.status}: ${await resp.text()}`);
+            await consumeUsage();
 
             const blob = await resp.blob();
             setResultUrl(URL.createObjectURL(blob));
