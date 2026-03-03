@@ -178,33 +178,20 @@ const ROUTES = [
     { id: 'my-files', path: '/my-files', label: 'My Files' },
 ];
 
-function AppInner() {
-    const { isSignedIn } = useUser();
-    const { getToken } = useAuth();
-    const { profile, setProfile, subModalOpen, setSubModalOpen, limitModalOpen, closeLimitModal, isProcessing } = useAuthContext();
+// ── AppLayout — rendered inside Router so it can use useLocation ────────────
+function AppLayout() {
+    const location = useLocation();
+    const { limitModalOpen, closeLimitModal, isProcessing } = useAuthContext();
+    const [menuOpen, setMenuOpen] = useState(false);
 
-    // Fetch/provision user record on sign-in
+    // Close mobile menu whenever the route changes
     useEffect(() => {
-        if (!isSignedIn) {
-            setProfile(null);
-            return;
-        }
-        (async () => {
-            try {
-                const token = await getToken();
-                const resp = await fetch('/auth/user/me', {
-                    headers: { Authorization: `Bearer ${token}` },
-                });
-                if (resp.ok) setProfile(await resp.json());
-            } catch (e) {
-                console.error('Failed to fetch user profile', e);
-            }
-        })();
-    }, [isSignedIn, getToken, setProfile]);
+        setMenuOpen(false);
+    }, [location.pathname]);
 
     return (
-        <Router>
-            <div className={`app-shell ${isProcessing ? 'processing-active' : ''}`}>
+        <>
+            <div className={`app-shell${isProcessing ? ' processing-active' : ''}`}>
                 {/* ── Top Bar ─────────────────────────────────── */}
                 <header className="top-bar">
                     <div className="top-bar-inner">
@@ -213,7 +200,8 @@ function AppInner() {
                             <span className="brand-text">Audio Pipeline</span>
                         </div>
 
-                        <nav className="top-bar-nav">
+                        {/* Desktop nav — hidden on mobile via CSS */}
+                        <nav className="top-bar-nav" aria-label="Main navigation">
                             {ROUTES.map((route) => (
                                 <NavLink
                                     key={route.id}
@@ -226,9 +214,42 @@ function AppInner() {
                             ))}
                         </nav>
 
-                        <UserMenu />
+                        <div className="top-bar-right">
+                            <UserMenu />
+                            {/* Hamburger — visible on mobile only */}
+                            <button
+                                className={`hamburger-btn${menuOpen ? ' open' : ''}`}
+                                onClick={() => setMenuOpen((v) => !v)}
+                                aria-label={menuOpen ? 'Close menu' : 'Open menu'}
+                                aria-expanded={menuOpen}
+                                aria-controls="mobile-nav"
+                            >
+                                <span />
+                                <span />
+                                <span />
+                            </button>
+                        </div>
                     </div>
                 </header>
+
+                {/* Mobile drawer — conditionally rendered when open */}
+                {menuOpen && (
+                    <nav id="mobile-nav" className="mobile-menu" aria-label="Mobile navigation">
+                        {ROUTES.map((route) => (
+                            <NavLink
+                                key={route.id}
+                                to={route.path}
+                                className={({ isActive }) => `mobile-menu-link${isActive ? ' active' : ''}`}
+                                onClick={() => {
+                                    setMenuOpen(false);
+                                    window.dispatchEvent(new CustomEvent('waveform:stop-all'));
+                                }}
+                            >
+                                {route.label}
+                            </NavLink>
+                        ))}
+                    </nav>
+                )}
 
                 {/* ── Page Content ────────────────────────────── */}
                 <main className="main-content">
@@ -253,6 +274,37 @@ function AppInner() {
             <SignInModal />
             <SubModalWrapper />
             <LimitModal open={limitModalOpen} onClose={closeLimitModal} />
+        </>
+    );
+}
+
+function AppInner() {
+    const { isSignedIn } = useUser();
+    const { getToken } = useAuth();
+    const { setProfile } = useAuthContext();
+
+    // Fetch/provision user record on sign-in
+    useEffect(() => {
+        if (!isSignedIn) {
+            setProfile(null);
+            return;
+        }
+        (async () => {
+            try {
+                const token = await getToken();
+                const resp = await fetch('/auth/user/me', {
+                    headers: { Authorization: `Bearer ${token}` },
+                });
+                if (resp.ok) setProfile(await resp.json());
+            } catch (e) {
+                console.error('Failed to fetch user profile', e);
+            }
+        })();
+    }, [isSignedIn, getToken, setProfile]);
+
+    return (
+        <Router>
+            <AppLayout />
         </Router>
     );
 }

@@ -327,6 +327,70 @@ bash scripts/agent-services.sh
 
 ---
 
+## UI Design System
+
+### Theme: Hetzner-Inspired
+Reference: https://www.hetzner.com/
+
+#### Color Palette
+| Token | Value | Usage |
+|-------|-------|-------|
+| Brand red | `#D50C2D` | CTAs, active states, accents |
+| Dark red | `#A8001F` | Hover/pressed states |
+| Light red | `#E82240` | Subtle hover tint |
+| Red glow | `rgba(213,12,45,0.18)` | Focus rings, shadows |
+| Background | `#FFFFFF` | Page background |
+| Surface | `#F4F4F4` | Panels, inputs, cards |
+| Text primary | `#1A1A1A` | Headings, body |
+| Text secondary | `#555555` | Labels, captions |
+| Text muted | `#909090` | Placeholders |
+| Border | `#E0E0E0` | All borders (solid, not rgba) |
+| Success | `#16a34a` | Confirm states |
+| Error | `#dc2626` | Error states |
+
+#### Design Principles
+- **Flat, not glossy** — no gradients on button backgrounds; solid `#D50C2D` only
+- **Minimal shadows** — rely on solid borders (`1px solid #E0E0E0`) rather than box-shadow
+- **Sharp corners** — `border-radius` max 10px for cards; 5px for buttons and inputs; never pill-shape buttons
+- **High contrast** — text must be readable on white in bright environments (WCAG AA minimum)
+- **Red used sparingly** — only on CTAs, active tab, and accent highlights; not on every element
+- **Dense layout** — information-rich, no excessive whitespace padding
+
+#### Border Radius Scale
+| Token | Value |
+|-------|-------|
+| `--radius-sm` | `4px` |
+| `--radius-md` | `8px` |
+| `--radius-lg` | `10px` |
+| `--radius-full` | `9999px` (for pill badges only, not buttons) |
+
+#### Typography
+- Body: 16px minimum (never smaller on mobile)
+- Labels: 14px minimum
+- Font: `'Inter', -apple-system, sans-serif`
+
+---
+
+### Mobile Best Practices (Required for all UI changes)
+
+All UI work must comply with these rules:
+
+1. **Larger Text** — Headlines and body text must be legible at arm's length. Min 16px body, min 20px headings on mobile.
+2. **Concise Copy** — Short paragraphs. Break up long content with headers and visual separators.
+3. **Bigger Buttons** — CTA buttons must have a minimum touch target of **44 × 44px**. No exceptions.
+4. **Simplified Nav** — Mobile viewport (`≤ 768px`) must use a hamburger menu. Never rely on horizontal-scrolling tabs on mobile.
+5. **No Horizontal Scroll** — All containers must use `max-width: 100%` and `overflow-x: hidden` on the root. No table or fixed-width element that bleeds.
+6. **Thumb-Friendly Layout** — Place primary actions (download, process, submit) centered or at bottom. Keep top corners free of critical controls.
+7. **Spaced Links** — Navigation links need `min-height: 44px` and visible padding between them so thumbs don't misfire.
+8. **No Popups on Mobile** — Modals must be `position: fixed; inset: 0` (full-screen) on `≤ 480px`. No floating centered dialogs on small screens.
+9. **Optimized Images** — Never use landscape-orientation decorative images. Prefer square or portrait. Always set `max-width: 100%`.
+10. **Touch-Only Guards** — Wrap hover transforms (`transform: translateY`, `transform: scale`) in `@media (hover: hover)` so they don't fire on touch devices.
+11. **Sticky Navigation** — Top bar must remain `position: sticky; top: 0` at all viewport sizes.
+12. **High Contrast** — Use solid `#E0E0E0` borders and `#1A1A1A` text. Avoid low-contrast grays for interactive elements.
+13. **Auto-fill on Forms** — Use correct `inputmode`, `autocomplete` attributes. Number inputs show numeric keypad (`inputmode="numeric"`).
+
+---
+
 ## Agent Workflows
 
 ### Adding Bugs — `.agent/workflows/addBugs.md`
