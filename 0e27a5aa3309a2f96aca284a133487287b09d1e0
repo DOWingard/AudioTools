@@ -1,0 +1,84 @@
+ui/src/components/KaraokeTab.jsx
+  81b8d7c5da64e555 14,33-34,42-56,58,61,67,71,92
+  10e9dba56839bb81 29
+ui/src/components/SyncTagTab.jsx
+  10e9dba56839bb81 35
+  81b8d7c5da64e555 21,39-40,54-67,69,76-78,80,82,108,113,133,157
+scripts/wipe-storage.py
+  d33b43b98da1efcf 1-117
+ui/src/components/MyFilesTab.jsx
+  1c29a9d7ba8ff819 5,175,192,197-198,357-362,364-365,367-370,378-379,381-384,386-387,399-411,482,486,488,495,497,500,513,516,518,523,525,555-558,560,564-571,574,576-578,580-581,584-586,595,597,609-613,615,618-619,624,635,643,646,650-654,656-658,660-661,685,692,705-706,852-855,862,877,900,910,956,961,998,1023,1039,1075-1095,1097,1101-1103,1143-1144,1185-1187,1206,1208,1211,1216,1219-1220,1229,1243,1268,1270-1271,1276-1278,1301-1306,1308-1309,1311
+  d33b43b98da1efcf 154,160-161,166-174,219-295,298-315,317-326,380,390-397,459-460,470-476,484,490-492,496,514,527-535,538-540,542,544-552,562,575,582,596,598-606,616-617,620-623,625-627,629-634,636-642,644-645,655,659,665-673,1053-1074,1096,1269,1272,1280-1281
+ui/src/App.jsx
+  10e9dba56839bb81 160
+ui/src/components/WaveformPlayer.jsx
+  10e9dba56839bb81 97
+ui/src/components/StemSeparatorTab.jsx
+  81b8d7c5da64e555 39,63-64,72-85,87,94,99,111,117
+  10e9dba56839bb81 57
+api/main.py
+  1c29a9d7ba8ff819 455,470-480,494,497,631,702,779,858,931,1003,1372
+  d33b43b98da1efcf 1450-1451,1461
+ui/src/components/AudioCutterTab.jsx
+  10e9dba56839bb81 142,182,185
+  81b8d7c5da64e555 31-32,186-187,197-207,209,212,218,222,353-361
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.1.4",
+  "base_commit_sha": "0e27a5aa3309a2f96aca284a133487287b09d1e0",
+  "prompts": {
+    "10e9dba56839bb81": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "0bdc0a27-90d8-4023-8eaf-f2a7abfe30fd",
+        "model": "claude-sonnet-4-6"
+      },
+      "human_author": "Derek Wingard <derekwingard@gmail.com>",
+      "messages": [],
+      "total_additions": 8,
+      "total_deletions": 1,
+      "accepted_lines": 8,
+      "overriden_lines": 0
+    },
+    "1c29a9d7ba8ff819": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "315dc943-6938-4d55-ade8-165584fcb61f",
+        "model": "claude-sonnet-4-6"
+      },
+      "human_author": "Derek Wingard <derekwingard@gmail.com>",
+      "messages": [],
+      "total_additions": 329,
+      "total_deletions": 507,
+      "accepted_lines": 192,
+      "overriden_lines": 15
+    },
+    "81b8d7c5da64e555": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "7a040ace-8b2c-40aa-8a32-bc55327c4651",
+        "model": "claude-sonnet-4-6"
+      },
+      "human_author": "Derek Wingard <derekwingard@gmail.com>",
+      "messages": [],
+      "total_additions": 106,
+      "total_deletions": 22,
+      "accepted_lines": 104,
+      "overriden_lines": 0
+    },
+    "d33b43b98da1efcf": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "13bea428-591a-4263-a46d-2767f9beee49",
+        "model": "claude-sonnet-4-6"
+      },
+      "human_author": "Derek Wingard <derekwingard@gmail.com>",
+      "messages": [],
+      "total_additions": 475,
+      "total_deletions": 225,
+      "accepted_lines": 367,
+      "overriden_lines": 4
+    }
+  }
+}
