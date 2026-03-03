@@ -9,26 +9,26 @@ const API_BASE = '/api';
 
 // Stem layout — mirrors the Python _STEM_LAYOUT
 const STEM_LAYOUT = [
-    { key: 'vocals', label: '🎤 Vocals', group: 'main' },
-    { key: 'drums', label: '🥁 Drums', group: 'main' },
-    { key: 'sub', label: '🔊 Sub Bass', group: 'main' },
-    { key: 'midbass', label: '🎸 Mid/Other', group: 'main' },
-    { key: 'drums_kick', label: '👟 Kick', group: 'drums' },
-    { key: 'drums_snare', label: '🪘 Snare', group: 'drums' },
-    { key: 'drums_toms', label: '🔔 Toms', group: 'drums' },
-    { key: 'drums_hihat', label: '🎩 Hi-Hat', group: 'drums' },
-    { key: 'drums_cymbals', label: '💿 Cymbals', group: 'drums' },
-    { key: 'oneshot_kick', label: '👟 Kick Shot', group: 'oneshots' },
-    { key: 'oneshot_snare', label: '🪘 Snare Shot', group: 'oneshots' },
-    { key: 'oneshot_toms', label: '🔔 Toms Shot', group: 'oneshots' },
-    { key: 'oneshot_hihat', label: '🎩 Hi-Hat Shot', group: 'oneshots' },
-    { key: 'oneshot_cymbals', label: '💿 Cymbals Shot', group: 'oneshots' },
+    { key: 'vocals', label: 'Vocals', group: 'main' },
+    { key: 'drums', label: 'Drums', group: 'main' },
+    { key: 'sub', label: 'Sub Bass', group: 'main' },
+    { key: 'midbass', label: 'Mid/Other', group: 'main' },
+    { key: 'drums_kick', label: 'Kick', group: 'drums' },
+    { key: 'drums_snare', label: 'Snare', group: 'drums' },
+    { key: 'drums_toms', label: 'Toms', group: 'drums' },
+    { key: 'drums_hihat', label: 'Hi-Hat', group: 'drums' },
+    { key: 'drums_cymbals', label: 'Cymbals', group: 'drums' },
+    { key: 'oneshot_kick', label: 'Kick Shot', group: 'oneshots' },
+    { key: 'oneshot_snare', label: 'Snare Shot', group: 'oneshots' },
+    { key: 'oneshot_toms', label: 'Toms Shot', group: 'oneshots' },
+    { key: 'oneshot_hihat', label: 'Hi-Hat Shot', group: 'oneshots' },
+    { key: 'oneshot_cymbals', label: 'Cymbals Shot', group: 'oneshots' },
 ];
 
 const GROUP_META = {
-    main: { title: '🎵 Main Stems', color: '#7c3aed' },
-    drums: { title: '🥁 Drum Stems', color: '#2563eb' },
-    oneshots: { title: '🔊 Drum One-Shots', color: '#059669' },
+    main: { title: 'Main Stems', color: '#7c3aed' },
+    drums: { title: 'Drum Stems', color: '#2563eb' },
+    oneshots: { title: 'Drum One-Shots', color: '#059669' },
 };
 
 export default function StemSeparatorTab() {
@@ -127,7 +127,7 @@ export default function StemSeparatorTab() {
 
             setProgress({ pct: 100, text: 'Separation complete!' });
             setStems(extracted);
-            setStatus(`✅ Separated ${Object.keys(extracted).length} stems from ${file.name}`);
+            setStatus(`Separated ${Object.keys(extracted).length} stems from ${file.name}`);
             localStorage.setItem('lastProcessedAt', String(Date.now()));
             window.dispatchEvent(new CustomEvent('audioProcessed'));
         } catch (e) {
@@ -157,7 +157,7 @@ export default function StemSeparatorTab() {
         return (
             <div key={groupId} className="card fade-in" style={{ marginBottom: '1.5rem' }}>
                 <h3 className="group-header" style={{ marginTop: 0 }}>
-                    <span style={{ color: meta.color }}>{meta.title.split(' ')[0]}</span> {meta.title.split(' ').slice(1).join(' ')}
+                    <span style={{ color: meta.color }}>{meta.title}</span>
                 </h3>
                 {groupStems.map((s) => (
                     <WaveformPlayer
@@ -193,7 +193,7 @@ export default function StemSeparatorTab() {
                             if (e.dataTransfer.files[0]) handleFile(e.dataTransfer.files[0]);
                         }}
                     >
-                        <span className="icon">🎵</span>
+                        <span className="icon">🎛️</span>
                         <span className="label">Drop audio here or click to browse</span>
                         <span className="hint">WAV, FLAC, MP3, AAC</span>
                         {file && <span className="file-name">{file.name}</span>}
@@ -220,11 +220,11 @@ export default function StemSeparatorTab() {
                             onClick={requireAuth(handleProcess)}
                             style={{ whiteSpace: 'nowrap', width: '100%' }}
                         >
-                            {loading ? '⏳ Processing…' : '🔀 Separate Stems'}
+                            {loading ? 'Processing...' : 'Separate Stems'}
                         </button>
                         {zipBlob && (
                             <button className="btn btn-secondary" onClick={downloadZip} style={{ width: '100%' }}>
-                                📦 Download All (ZIP)
+                                Download All (ZIP)
                             </button>
                         )}
                     </div>
@@ -241,7 +241,7 @@ export default function StemSeparatorTab() {
                 )}
 
                 {/* Error / Status */}
-                {error && <p className="status-error" style={{ marginTop: '1rem' }}>❌ {error}</p>}
+                {error && <p className="status-error" style={{ marginTop: '1rem' }}>Error: {error}</p>}
                 {status && <p className="status-success" style={{ marginTop: '1rem' }}>{status}</p>}
 
             </div>

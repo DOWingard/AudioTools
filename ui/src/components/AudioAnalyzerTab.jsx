@@ -94,22 +94,22 @@ export default function AudioAnalyzerTab() {
                     disabled={!file || loading}
                     onClick={requireAuth(run)}
                 >
-                    {loading ? '⏳ Analyzing…' : '📊 Analyze Audio'}
+                    {loading ? 'Analyzing...' : 'Analyze Audio'}
                 </button>
 
-                {error && <p className="status-error" style={{ marginTop: '1rem' }}>❌ {error}</p>}
+                {error && <p className="status-error" style={{ marginTop: '1rem' }}>Error: {error}</p>}
 
                 {result && (
                     <div className="fade-in" style={{ marginTop: '1.5rem' }}>
                         {/* Hero stats */}
                         <div className="result-grid">
                             <div className="result-card result-card-hero">
-                                <span className="result-icon">⏱️</span>
+                                <span className="result-icon">BPM</span>
                                 <span className="result-value">{result.bpm}</span>
                                 <span className="result-label">BPM</span>
                             </div>
                             <div className="result-card result-card-hero">
-                                <span className="result-icon">🎹</span>
+                                <span className="result-icon">Key</span>
                                 <span className="result-value">{result.key}</span>
                                 <span className="result-label">Musical Key</span>
                                 {result.key_confidence != null && (
@@ -132,32 +132,32 @@ export default function AudioAnalyzerTab() {
                         {/* Detail grid */}
                         <div className="result-grid" style={{ marginTop: '1.5rem' }}>
                             <div className="result-card">
-                                <span className="result-icon">🏃</span>
+                                <span className="result-icon">Tempo</span>
                                 <span className="result-value">{result.tempo_category}</span>
                                 <span className="result-label">Tempo</span>
                             </div>
                             <div className="result-card">
-                                <span className="result-icon">⏱️</span>
+                                <span className="result-icon">Duration</span>
                                 <span className="result-value">{result.duration}s</span>
                                 <span className="result-label">Duration</span>
                             </div>
                             <div className="result-card">
-                                <span className="result-icon">📢</span>
+                                <span className="result-icon">Loudness</span>
                                 <span className="result-value">{result.lufs != null ? `${result.lufs} LUFS` : 'N/A'}</span>
                                 <span className="result-label">Loudness</span>
                             </div>
                             <div className="result-card">
-                                <span className="result-icon">📈</span>
+                                <span className="result-icon">Peak</span>
                                 <span className="result-value">{result.peak_db} dB</span>
                                 <span className="result-label">Peak Level</span>
                             </div>
                             <div className="result-card">
-                                <span className="result-icon">📉</span>
+                                <span className="result-icon">RMS</span>
                                 <span className="result-value">{result.rms_db} dB</span>
                                 <span className="result-label">RMS Level</span>
                             </div>
                             <div className="result-card">
-                                <span className="result-icon">✨</span>
+                                <span className="result-icon">Brightness</span>
                                 <span className="result-value">{result.brightness_hz} Hz</span>
                                 <span className="result-label">Brightness</span>
                             </div>

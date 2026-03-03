@@ -113,7 +113,7 @@ export default function SubscriptionModal({ open, onClose, initialPlan = null })
                             ))}
                         </div>
 
-                        {error && <p className="status-error" style={{ marginTop: '1rem' }}>❌ {error}</p>}
+                        {error && <p className="status-error" style={{ marginTop: '1rem' }}>Error: {error}</p>}
                     </>
                 ) : (
                     /* ── Embedded Stripe Checkout ───────────────────── */
@@ -139,7 +139,7 @@ export default function SubscriptionModal({ open, onClose, initialPlan = null })
                         </div>
 
                         {error ? (
-                            <p className="status-error" style={{ marginTop: '1rem' }}>❌ {error}</p>
+                            <p className="status-error" style={{ marginTop: '1rem' }}>Error: {error}</p>
                         ) : (
                             <EmbeddedCheckoutProvider
                                 stripe={stripePromise}

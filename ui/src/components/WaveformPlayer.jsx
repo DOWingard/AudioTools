@@ -12,7 +12,7 @@ const STOP_ALL_EVENT = 'waveform:stop-all';
  * canvas that matches the container's CSS width.
  *
  * Props:
- *   label    — display name (e.g. "🎤 Vocals")
+ *   label    — display name (e.g. "Vocals")
  *   audioBlob — Blob of the audio (WAV)
  *   fileName — original filename for download
  *   color    — waveform fill color (optional)

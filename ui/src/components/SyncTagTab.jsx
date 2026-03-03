@@ -164,7 +164,7 @@ export default function SyncTagTab() {
                                 if (e.dataTransfer.files[0]) handleFile(e.dataTransfer.files[0]);
                             }}
                         >
-                            <span className="icon">🎵</span>
+                            <span className="icon">🏷️</span>
                             <span className="hint">WAV, FLAC, MP3, AAC</span>
                             {file && <span className="file-name">{file.name}</span>}
                             <input
@@ -248,7 +248,7 @@ export default function SyncTagTab() {
                             disabled={!file || loading}
                             onClick={requireAuth(handleProcess)}
                         >
-                            {loading ? '⏳ Processing…' : '🚀 Analyze & Tag Track'}
+                            {loading ? 'Processing...' : 'Analyze & Tag Track'}
                         </button>
 
                         {storageConfirmMsg && (
@@ -271,7 +271,7 @@ export default function SyncTagTab() {
 
                     {/* Right column — results */}
                     <div>
-                        {error && <p className="status-error">❌ {error}</p>}
+                        {error && <p className="status-error">Error: {error}</p>}
 
                         {result && (
                             <div className="fade-in">
@@ -280,7 +280,7 @@ export default function SyncTagTab() {
                                 {result.audioBlob && (
                                     <div style={{ marginTop: '1.5rem' }}>
                                         <WaveformPlayer
-                                            label="🎧 Tagged Audio"
+                                            label="Tagged Audio"
                                             audioBlob={result.audioBlob}
                                             fileName={result.audioName}
                                             autoPlay={true}
@@ -295,7 +295,7 @@ export default function SyncTagTab() {
                                             style={{ flex: 1 }}
                                             onClick={() => downloadBlob(result.audioBlob, result.audioName)}
                                         >
-                                            ⬇ Tagged Audio
+                                            Download Tagged Audio
                                         </button>
                                     )}
                                     {result.csvBlob && (
@@ -304,7 +304,7 @@ export default function SyncTagTab() {
                                             style={{ flex: 1 }}
                                             onClick={() => downloadBlob(result.csvBlob, result.csvName)}
                                         >
-                                            ⬇ CSV Sidecar
+                                            Download CSV Sidecar
                                         </button>
                                     )}
                                 </div>

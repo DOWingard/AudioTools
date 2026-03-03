@@ -21,7 +21,7 @@ export default function StorageConfirmModal({ message, onYes, onNo }) {
                 style={{ maxWidth: 420, padding: '2rem', textAlign: 'center' }}
                 onClick={(e) => e.stopPropagation()}
             >
-                <div style={{ fontSize: '2rem', marginBottom: '0.75rem' }}>🗄️</div>
+                <div style={{ fontSize: '2rem', marginBottom: '0.75rem' }}>Storage</div>
                 <h3 style={{ margin: '0 0 0.75rem', fontSize: '1.1rem' }}>Storage Limit</h3>
                 <p style={{
                     color: 'var(--text-secondary)',

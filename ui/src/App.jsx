@@ -33,29 +33,29 @@ class RouteErrorBoundary extends Component {
             return (
                 <div style={{ padding: '2.5rem 2rem' }}>
                     <div style={{
-                        background: '#fff0f0',
-                        border: '1px solid #fca5a5',
+                        background: '#1f1f1f',
+                        border: '1px solid rgba(239,68,68,0.3)',
                         borderRadius: '0.75rem',
                         padding: '1.5rem 2rem',
                         maxWidth: 680,
                         margin: '0 auto',
                     }}>
-                        <h2 style={{ margin: '0 0 0.5rem', color: '#dc2626', fontSize: '1.1rem' }}>
-                            ⚠ Page failed to render
+                        <h2 style={{ margin: '0 0 0.5rem', color: '#ef4444', fontSize: '1.1rem' }}>
+                            Page failed to render
                         </h2>
                         <pre style={{
-                            color: '#7f1d1d',
+                            color: '#fca5a5',
                             fontSize: '0.8rem',
                             whiteSpace: 'pre-wrap',
                             wordBreak: 'break-word',
                             margin: '0.75rem 0 1rem',
-                            background: '#fee2e2',
+                            background: 'rgba(239,68,68,0.08)',
                             padding: '0.75rem',
                             borderRadius: '0.4rem',
                         }}>
                             {this.state.error?.stack || this.state.error?.message || String(this.state.error)}
                         </pre>
-                        <p style={{ margin: 0, color: '#64748b', fontSize: '0.9rem' }}>
+                        <p style={{ margin: 0, color: '#888888', fontSize: '0.9rem' }}>
                             Navigate to another page to continue. Copy the error above and report it.
                         </p>
                     </div>
@@ -146,14 +146,14 @@ function CheckoutReturn() {
     if (status === 'success') {
         return (
             <div style={cardStyle}>
-                <p style={{ fontSize: '1.5rem', color: '#16a34a' }}>Subscription activated!</p>
+                <p style={{ fontSize: '1.5rem', color: '#22c55e' }}>Subscription activated!</p>
             </div>
         );
     }
     if (status === 'error') {
         return (
             <div style={cardStyle}>
-                <p style={{ color: '#dc2626' }}>{message}</p>
+                <p style={{ color: '#ef4444' }}>{message}</p>
                 <Link to="/synctag">← Back</Link>
             </div>
         );
@@ -191,95 +191,90 @@ function AppLayout() {
 
     return (
         <>
-            <div className={`app-shell${isProcessing ? ' processing-active' : ''}`}>
-                {/* ── Top Bar ─────────────────────────────────── */}
-                <header className="top-bar">
-                    <div className="top-bar-inner">
-                        <div className="top-bar-brand">
-                            <span className="brand-icon">♫</span>
-                            <span className="brand-text">Audio Pipeline</span>
-                        </div>
-
-                        {/* Desktop nav — hidden on mobile via CSS */}
-                        <nav className="top-bar-nav" aria-label="Main navigation">
-                            {ROUTES.map((route) => (
-                                <NavLink
-                                    key={route.id}
-                                    to={route.path}
-                                    className={({ isActive }) => `tab-link ${isActive ? 'active' : ''}`}
-                                    onClick={() => window.dispatchEvent(new CustomEvent('waveform:stop-all'))}
-                                >
-                                    {route.label}
-                                </NavLink>
-                            ))}
-                        </nav>
-
-                        <div className="top-bar-right">
-                            <a
-                                href="mailto:support@email.com"
-                                className="auth-btn support-btn"
-                                style={{
-                                    textDecoration: 'none',
-                                    display: 'inline-flex',
-                                    alignItems: 'center',
-                                }}
-                            >
-                                Support
-                            </a>
-                            <UserMenu />
-                            {/* Hamburger — visible on mobile only */}
-                            <button
-                                className={`hamburger-btn${menuOpen ? ' open' : ''}`}
-                                onClick={() => setMenuOpen((v) => !v)}
-                                aria-label={menuOpen ? 'Close menu' : 'Open menu'}
-                                aria-expanded={menuOpen}
-                                aria-controls="mobile-nav"
-                            >
-                                <span />
-                                <span />
-                                <span />
-                            </button>
-                        </div>
+            <div className="app-layout">
+                {/* ── Sidebar (Desktop only) ──────────────────── */}
+                <aside className="sidebar">
+                    <div className="sidebar-header">
+                        <span className="brand-text" style={{ fontWeight: 800, color: 'var(--accent)', fontSize: '1.25rem' }}>
+                            SyncTag AI
+                        </span>
                     </div>
-                </header>
-
-                {/* Mobile drawer — conditionally rendered when open */}
-                {menuOpen && (
-                    <nav id="mobile-nav" className="mobile-menu" aria-label="Mobile navigation">
+                    <nav className="sidebar-nav">
                         {ROUTES.map((route) => (
                             <NavLink
                                 key={route.id}
                                 to={route.path}
-                                className={({ isActive }) => `mobile-menu-link${isActive ? ' active' : ''}`}
-                                onClick={() => {
-                                    setMenuOpen(false);
-                                    window.dispatchEvent(new CustomEvent('waveform:stop-all'));
-                                }}
+                                className={({ isActive }) => `sidebar-link ${isActive ? 'active' : ''}`}
+                                onClick={() => window.dispatchEvent(new CustomEvent('waveform:stop-all'))}
                             >
                                 {route.label}
                             </NavLink>
                         ))}
                     </nav>
-                )}
+                </aside>
 
-                <div className="app-body-container">
-                    {/* ── Sidebar (Desktop only) ──────────────────── */}
-                    <aside className="side-nav">
-                        <nav className="side-nav-inner" aria-label="Side navigation">
+                <div className="main-wrapper">
+                    {/* ── Top Bar ─────────────────────────────────── */}
+                    <header className="top-bar">
+                        <div className="top-bar-inner">
+                            <div className="brand-logo-mobile" style={{ display: 'none' }}>
+                                <span style={{ fontWeight: 800, color: 'var(--accent)', fontSize: '1.25rem' }}>
+                                    SyncTag AI
+                                </span>
+                            </div>
+
+                            <div className="top-bar-right" style={{ marginLeft: 'auto' }}>
+                                <a
+                                    href="mailto:support@email.com"
+                                    className="auth-btn support-btn"
+                                    style={{
+                                        textDecoration: 'none',
+                                        display: 'inline-flex',
+                                        alignItems: 'center',
+                                        marginRight: '1rem',
+                                        fontSize: '0.85rem',
+                                        fontWeight: 600,
+                                        color: 'var(--text-secondary)'
+                                    }}
+                                >
+                                    Support
+                                </a>
+                                <UserMenu />
+                                {/* Hamburger — visible on mobile only */}
+                                <button
+                                    className={`hamburger-btn${menuOpen ? ' open' : ''}`}
+                                    onClick={() => setMenuOpen((v) => !v)}
+                                    aria-label={menuOpen ? 'Close menu' : 'Open menu'}
+                                    aria-expanded={menuOpen}
+                                    aria-controls="mobile-nav"
+                                >
+                                    <span />
+                                    <span />
+                                    <span />
+                                </button>
+                            </div>
+                        </div>
+                    </header>
+
+                    {/* Mobile drawer — conditionally rendered when open */}
+                    {menuOpen && (
+                        <nav id="mobile-nav" className="mobile-menu" aria-label="Mobile navigation">
                             {ROUTES.map((route) => (
                                 <NavLink
                                     key={route.id}
                                     to={route.path}
-                                    className={({ isActive }) => `side-nav-link ${isActive ? 'active' : ''}`}
-                                    onClick={() => window.dispatchEvent(new CustomEvent('waveform:stop-all'))}
+                                    className={({ isActive }) => `mobile-menu-link${isActive ? ' active' : ''}`}
+                                    onClick={() => {
+                                        setMenuOpen(false);
+                                        window.dispatchEvent(new CustomEvent('waveform:stop-all'));
+                                    }}
                                 >
                                     {route.label}
                                 </NavLink>
                             ))}
                         </nav>
-                    </aside>
+                    )}
 
-                    {/* ── Page Content ────────────────────────────── */}
                     <main className="main-content">
                         <RouteErrorBoundaryWrapper>
                             <Routes>

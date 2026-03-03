@@ -126,18 +126,18 @@ export default function AudioJoinerTab() {
                                         onClick={() => moveFile(i, -1)}
                                         disabled={i === 0}
                                         title="Move up"
-                                    >▲</button>
+                                    >⬆️</button>
                                     <button
                                         className="file-list-btn"
                                         onClick={() => moveFile(i, 1)}
                                         disabled={i === files.length - 1}
                                         title="Move down"
-                                    >▼</button>
+                                    >⬇️</button>
                                     <button
                                         className="file-list-btn file-list-btn-remove"
                                         onClick={() => removeFile(i)}
                                         title="Remove"
-                                    >✕</button>
+                                    >❌</button>
                                 </div>
                             </div>
                         ))}
@@ -150,7 +150,7 @@ export default function AudioJoinerTab() {
                     disabled={files.length < 2 || loading}
                     onClick={requireAuth(handleProcess)}
                 >
-                    {loading ? '⏳ Joining…' : `🔗 Join ${files.length} Files`}
+                    {loading ? 'Joining...' : `Join ${files.length} Files`}
                 </button>
 
                 {storageConfirmMsg && (
@@ -161,14 +161,14 @@ export default function AudioJoinerTab() {
                     />
                 )}
 
-                {error && <p className="status-error" style={{ marginTop: '1rem' }}>❌ {error}</p>}
+                {error && <p className="status-error" style={{ marginTop: '1rem' }}>Error: {error}</p>}
 
                 {resultUrl && (
                     <div className="fade-in" style={{ marginTop: '1.5rem' }}>
-                        <p className="status-success">✅ Audio files joined successfully!</p>
+                        <p className="status-success">Audio files joined successfully!</p>
                         <audio controls src={resultUrl} style={{ width: '100%', marginTop: '0.5rem' }} />
                         <button className="btn btn-secondary" style={{ marginTop: '1rem', width: '100%' }} onClick={download}>
-                            ⬇ Download Joined Audio
+                            Download Joined Audio
                         </button>
                     </div>
                 )}

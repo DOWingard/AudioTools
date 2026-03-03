@@ -139,7 +139,7 @@ export default function KaraokeTab() {
                     disabled={!file || loading}
                     onClick={requireAuth(handleProcess)}
                 >
-                    {loading ? '⏳ Processing…' : '🎤 Remove Vocals'}
+                    {loading ? 'Processing...' : 'Remove Vocals'}
                 </button>
 
                 {storageConfirmMsg && (
@@ -159,20 +159,20 @@ export default function KaraokeTab() {
                     </div>
                 )}
 
-                {error && <p className="status-error" style={{ marginTop: '1rem' }}>❌ {error}</p>}
+                {error && <p className="status-error" style={{ marginTop: '1rem' }}>Error: {error}</p>}
 
                 {resultBlob && (
                     <div className="fade-in" style={{ marginTop: '1.5rem' }}>
-                        <p className="status-success">✅ Vocals removed successfully!</p>
+                        <p className="status-success">Vocals removed successfully!</p>
                         <WaveformPlayer
-                            label="🎵 Instrumental (Karaoke)"
+                            label="Instrumental (Karaoke)"
                             audioBlob={resultBlob}
                             fileName={resultName}
                             color="#e63946"
                             autoPlay={true}
                         />
                         <button className="btn btn-secondary" style={{ marginTop: '1rem', width: '100%' }} onClick={download}>
-                            ⬇ Download Instrumental
+                            Download Instrumental
                         </button>
                     </div>
                 )}

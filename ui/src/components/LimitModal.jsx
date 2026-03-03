@@ -60,7 +60,7 @@ export default function LimitModal({ open, onClose }) {
                 {!selectedPlan ? (
                     <>
                         <div style={{ textAlign: 'center', marginBottom: '1.5rem' }}>
-                            <div style={{ fontSize: '2.5rem', marginBottom: '0.5rem' }}>🚫</div>
+                            <div style={{ fontSize: '1.25rem', fontWeight: 800, marginBottom: '0.5rem', color: 'var(--danger)' }}>LIMIT REACHED</div>
                             <h2 style={{ margin: '0 0 0.4rem' }}>Daily limit reached</h2>
                             <p style={{ margin: 0, color: 'var(--text-secondary)', fontSize: '0.95rem' }}>
                                 You've used all 3 free daily uses. Upgrade to continue processing tracks.

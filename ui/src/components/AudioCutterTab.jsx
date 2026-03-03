@@ -323,8 +323,9 @@ export default function AudioCutterTab() {
                             style={{ marginTop: '0.75rem', width: '100%', justifyContent: 'center' }}
                             onClick={previewSelection}
                             disabled={!duration}
+                            title={playing ? 'Pause Preview' : 'Preview Selection'}
                         >
-                            {playing ? '⏸ Pause Preview' : '▶ Preview Selection'}
+                            {playing ? '⏸' : '▶'}
                         </button>
                     </div>
                 )}
@@ -366,7 +367,7 @@ export default function AudioCutterTab() {
                     disabled={!file || loading}
                     onClick={requireAuth(handleProcess)}
                 >
-                    {loading ? '⏳ Cutting…' : '✂️ Cut Audio'}
+                    {loading ? 'Cutting...' : 'Cut Audio'}
                 </button>
 
                 {storageConfirmMsg && (
@@ -386,20 +387,20 @@ export default function AudioCutterTab() {
                     </div>
                 )}
 
-                {error && <p className="status-error" style={{ marginTop: '1rem' }}>❌ {error}</p>}
+                {error && <p className="status-error" style={{ marginTop: '1rem' }}>Error: {error}</p>}
 
                 {resultBlob && (
                     <div className="fade-in" style={{ marginTop: '1.5rem' }}>
-                        <p className="status-success">✅ Audio trimmed successfully!</p>
+                        <p className="status-success">Audio trimmed successfully!</p>
                         <WaveformPlayer
-                            label="✂️ Trimmed Audio"
+                            label="Trimmed Audio"
                             audioBlob={resultBlob}
                             fileName={resultName}
                             color="#e63946"
                             autoPlay={true}
                         />
                         <button className="btn btn-secondary" style={{ marginTop: '1rem', width: '100%' }} onClick={download}>
-                            ⬇ Download Trimmed Audio
+                            Download Trimmed Audio
                         </button>
                     </div>
                 )}

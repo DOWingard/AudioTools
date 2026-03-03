@@ -17,14 +17,14 @@ const API_BASE = '/api';
 /* ─── Constants ────────────────────────────────────────────────────────────── */
 
 const PROCESS_META = {
-    separate: { label: 'Stem Separator', icon: '🎛️', color: '#7c3aed' },
-    tag: { label: 'SyncTag', icon: '🏷️', color: '#e63946' },
-    karaoke: { label: 'Vocal Remover', icon: '🎤', color: '#2563eb' },
-    cut: { label: 'Audio Cutter', icon: '✂️', color: '#059669' },
-    join: { label: 'Audio Joiner', icon: '🔗', color: '#d97706' },
-    convert: { label: 'Format Converter', icon: '🔄', color: '#0891b2' },
-    analyze: { label: 'Track Analyzer', icon: '📊', color: '#f59e0b' },
-    upload: { label: 'Uploaded', icon: '📤', color: '#6366f1' },
+    separate: { label: 'Stem Separator', icon: '', color: '#7c3aed' },
+    tag: { label: 'SyncTag', icon: '', color: '#e63946' },
+    karaoke: { label: 'Vocal Remover', icon: '', color: '#2563eb' },
+    cut: { label: 'Audio Cutter', icon: '', color: '#059669' },
+    join: { label: 'Audio Joiner', icon: '', color: '#d97706' },
+    convert: { label: 'Format Converter', icon: '', color: '#0891b2' },
+    analyze: { label: 'Track Analyzer', icon: '', color: '#f59e0b' },
+    upload: { label: 'Uploaded', icon: '', color: '#6366f1' },
 };
 
 const SUBGROUP_META = {
@@ -98,7 +98,7 @@ function NowPlayingBar({ nowPlaying, onClose, onPrev, onNext }) {
             <div style={{ maxWidth: 1200, margin: '0 auto' }}>
                 {/* Header row */}
                 <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', marginBottom: '0.5rem' }}>
-                    <span style={{ fontSize: '1.1rem' }}>{proc.icon || '🎵'}</span>
+                    <span style={{ fontSize: '1.1rem' }}>{proc.icon || ''}</span>
                     <span style={{ fontWeight: 700, fontSize: '0.9rem', flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                         {nowPlaying.filename}
                     </span>
@@ -120,8 +120,8 @@ function NowPlayingBar({ nowPlaying, onClose, onPrev, onNext }) {
                             Loading…
                         </span>
                     )}
-                    <button onClick={onPrev} style={navBtnStyle} title="Previous file (↑)">▲</button>
-                    <button onClick={onNext} style={navBtnStyle} title="Next file (↓)">▼</button>
+                    <button onClick={onPrev} style={navBtnStyle} title="Previous file">Prev</button>
+                    <button onClick={onNext} style={navBtnStyle} title="Next file">Next</button>
                     <button
                         onClick={onClose}
                         style={{
@@ -131,7 +131,7 @@ function NowPlayingBar({ nowPlaying, onClose, onPrev, onNext }) {
                         }}
                         title="Close player"
                     >
-                        ✕
+                        Close
                     </button>
                 </div>
                 {nowPlaying.blob && (
@@ -186,7 +186,7 @@ function FileRow({ file, isPlaying, isLoading, onPlay, selected, onSelect, accen
                 }}
                 title={isPlaying ? 'Now playing' : 'Play'}
             >
-                {isLoading ? '⏳' : (isPlaying ? '♫' : '▶')}
+                {isLoading ? '...' : (isPlaying ? '⏸' : '▶')}
             </button>
 
             {/* Filename */}
@@ -229,14 +229,14 @@ function BulkSelectionBar({ count, onDownload, onRequestDelete, onClear }) {
                 {count} file{count !== 1 ? 's' : ''} selected
             </span>
             <button className="btn btn-secondary" style={{ padding: '0.35rem 0.9rem', fontSize: '0.82rem' }} onClick={onDownload}>
-                ⬇ Download
+                Download
             </button>
             <button
                 className="btn"
                 style={{ padding: '0.35rem 0.9rem', fontSize: '0.82rem', background: '#ef4444', color: '#fff', border: '1px solid #ef4444' }}
                 onClick={onRequestDelete}
             >
-                🗑 Delete
+                Delete
             </button>
             <button
                 onClick={onClear}
@@ -248,7 +248,7 @@ function BulkSelectionBar({ count, onDownload, onRequestDelete, onClear }) {
                 }}
                 title="Clear selection"
             >
-                ✕
+                Clear
             </button>
         </div>
     );
@@ -399,7 +399,7 @@ function FilesView({ files, loading, error, nowPlaying, loadingId, onPlay, onDel
             {/* Empty state */}
             {!loading && files.length === 0 && !error && (
                 <div style={{ textAlign: 'center', padding: '3rem 2rem' }}>
-                    <div style={{ fontSize: '2.5rem', marginBottom: '1rem' }}>🎵</div>
+                    <div style={{ fontSize: '2.5rem', marginBottom: '1rem' }}>Library</div>
                     <h3 style={{ marginBottom: '0.5rem' }}>Your library is empty</h3>
                     <p style={{ color: 'var(--text-secondary)', maxWidth: 400, margin: '0 auto' }}>
                         Every time you use a tool (Stem Separator, SyncTag, etc.),
@@ -410,7 +410,7 @@ function FilesView({ files, loading, error, nowPlaying, loadingId, onPlay, onDel
 
             {/* File groups */}
             {processTypes.map((pt) => {
-                const procMeta = PROCESS_META[pt] || { label: pt, icon: '🎵', color: '#888' };
+                const procMeta = PROCESS_META[pt] || { label: pt, icon: '', color: '#888' };
                 const subOrder = PROCESS_SUBGROUP_ORDER[pt] || Object.keys(grouped[pt]);
                 const validSubs = subOrder.filter(sg => grouped[pt][sg]?.length > 0);
                 const total = Object.values(grouped[pt]).flat().length;
@@ -577,9 +577,9 @@ function SmartSearch({ getToken, onDelete, onDownloadFile, isPremiumUser, onPrem
     return (
         <div className="card fade-in">
             <div style={{ maxWidth: 600, margin: '0 auto' }}>
-                <h3 style={{ margin: '0 0 0.4rem' }}>🔍 Smart Search</h3>
+                <h3 style={{ margin: '0 0 0.4rem' }}>Smart Search</h3>
                 <p style={{ color: 'var(--text-secondary)', margin: '0 0 1.25rem', fontSize: '0.875rem' }}>
-                    Find the most similar files in your library using advanced AI embeddings.
+                    Find the most similar files in your library.
                 </p>
 
                 {/* Audio drop zone */}
@@ -630,7 +630,7 @@ function SmartSearch({ getToken, onDelete, onDownloadFile, isPremiumUser, onPrem
                         }
                     }}
                 >
-                    {searching ? '⏳ Searching…' : '🔍 Find Similar'}
+                    {searching ? 'Searching...' : 'Find Similar'}
                 </button>
 
                 {/* Bulk action bar */}
@@ -650,7 +650,7 @@ function SmartSearch({ getToken, onDelete, onDownloadFile, isPremiumUser, onPrem
                         borderRadius: 'var(--radius-sm)', padding: '0.65rem 0.875rem',
                         color: '#dc2626', fontSize: '0.875rem', marginBottom: '1rem',
                     }}>
-                        ⚠️ {searchError}
+                        Error: {searchError}
                     </div>
                 )}
 
@@ -711,7 +711,7 @@ function SmartSearch({ getToken, onDelete, onDownloadFile, isPremiumUser, onPrem
                                 disabled={loadingMore || searching}
                                 onClick={() => search(results.length)}
                             >
-                                {loadingMore ? '⏳ Loading…' : '+ 10 More'}
+                                {loadingMore ? 'Loading...' : '+ 10 More'}
                             </button>
                         )}
                     </div>
@@ -754,7 +754,7 @@ function UpgradeWall({ onSelectPlan }) {
     return (
         <div className="fade-in">
             <div className="card" style={{ textAlign: 'center', padding: '2.5rem 2rem 2rem' }}>
-                <div style={{ fontSize: '3rem', marginBottom: '1rem' }}>🗂️</div>
+                <div style={{ fontSize: '3rem', marginBottom: '1rem' }}>Subscription Required</div>
                 <h2 style={{ marginBottom: '0.5rem' }}>My Files requires a subscription</h2>
                 <p style={{ color: 'var(--text-secondary)', maxWidth: 480, margin: '0 auto 2rem', fontSize: '0.95rem' }}>
                     Every file you process is automatically saved to your personal library.
@@ -832,7 +832,7 @@ function PremiumFeatureOverlay({ onClose, onUpgrade, featureName }) {
                 <div style={{
                     fontSize: '4rem', marginBottom: '1.5rem',
                     filter: 'drop-shadow(0 10px 15px rgba(217, 119, 6, 0.3))'
-                }}>💎</div>
+                }}>Premium</div>
 
                 <h2 style={{ fontSize: '1.8rem', marginBottom: '1rem', background: 'linear-gradient(to right, #d97706, #f59e0b)', WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent' }}>
                     Premium Feature
@@ -1194,13 +1194,13 @@ export default function MyFilesTab() {
                 throw new Error(`API ${resp.status}: ${text}`);
             }
             const data = await resp.json();
-            setBulkStatus(`✅ ${data.queued} file${data.queued !== 1 ? 's' : ''} queued for embedding`);
+            setBulkStatus(`${data.queued} file${data.queued !== 1 ? 's' : ''} queued for embedding`);
             // Refresh file list + start polling for new embeddings
             fetchFiles();
             startPolling();
             localStorage.setItem('lastProcessedAt', String(Date.now()));
         } catch (err) {
-            setBulkStatus(`❌ ${err.message}`);
+            setBulkStatus(`Error: ${err.message}`);
         } finally {
             setBulkUploading(false);
             // Clear status after 6 seconds
@@ -1214,7 +1214,7 @@ export default function MyFilesTab() {
         return (
             <div className="fade-in">
                 <div className="card" style={{ textAlign: 'center', padding: '3rem' }}>
-                    <div style={{ fontSize: '3rem', marginBottom: '1rem' }}>🔒</div>
+                    <div style={{ fontSize: '3rem', marginBottom: '1rem' }}>Locked</div>
                     <h2 style={{ marginBottom: '0.5rem' }}>Sign In to View Your Files</h2>
                     <p style={{ color: 'var(--text-secondary)' }}>
                         Your processed audio files will appear here once you sign in and use any tool.
@@ -1268,7 +1268,7 @@ export default function MyFilesTab() {
                             style={{ padding: '0.4rem 1rem', fontSize: '0.82rem' }}
                             onClick={() => setView('files')}
                         >
-                            📂 Saved Files
+                            Saved Files
                         </button>
 
                         {/* Smart Search sub-tab (premium only) */}
@@ -1284,7 +1284,7 @@ export default function MyFilesTab() {
                                 setView('search');
                             }}
                         >
-                            🔍 Smart Search
+                            Smart Search
                             {!isPremiumUser && (
                                 <span style={{
                                     marginLeft: '0.35rem', fontSize: '0.62rem',
@@ -1301,7 +1301,7 @@ export default function MyFilesTab() {
                                 style={{ padding: '0.4rem 0.65rem', fontSize: '0.82rem' }}
                                 onClick={fetchFiles} disabled={filesLoading} title="Refresh"
                             >
-                                {filesLoading ? '⏳' : '↻'}
+                                {filesLoading ? '...' : 'Refresh'}
                             </button>
                         )}
                     </div>
@@ -1311,7 +1311,7 @@ export default function MyFilesTab() {
             {/* ── Error / status banners ──────────────────────────── */}
             {filesError && (
                 <div className="card" style={{ marginBottom: '1.5rem' }}>
-                    <p className="status-error">❌ {filesError}</p>
+                    <p className="status-error">Error: {filesError}</p>
                 </div>
             )}
 
@@ -1319,7 +1319,7 @@ export default function MyFilesTab() {
                 <div className="card" style={{ marginBottom: '1.5rem' }}>
                     <p style={{
                         margin: 0, fontSize: '0.9rem', fontWeight: 500,
-                        color: bulkStatus.startsWith('❌') ? 'var(--danger)' : 'var(--text-secondary)',
+                        color: bulkStatus.startsWith('Error') ? 'var(--danger)' : 'var(--text-secondary)',
                     }}>{bulkStatus}</p>
                 </div>
             )}

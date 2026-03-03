@@ -140,7 +140,7 @@ export default function FormatConverterTab() {
                     disabled={!file || loading}
                     onClick={requireAuth(handleProcess)}
                 >
-                    {loading ? '⏳ Converting…' : `🔄 Convert to ${format.toUpperCase()}`}
+                    {loading ? 'Converting...' : `Convert to ${format.toUpperCase()}`}
                 </button>
 
                 {storageConfirmMsg && (
@@ -151,13 +151,13 @@ export default function FormatConverterTab() {
                     />
                 )}
 
-                {error && <p className="status-error" style={{ marginTop: '1rem' }}>❌ {error}</p>}
+                {error && <p className="status-error" style={{ marginTop: '1rem' }}>Error: {error}</p>}
 
                 {resultUrl && (
                     <div className="fade-in" style={{ marginTop: '1.5rem' }}>
-                        <p className="status-success">✅ Converted to {format.toUpperCase()} successfully!</p>
+                        <p className="status-success">Converted to {format.toUpperCase()} successfully!</p>
                         <button className="btn btn-secondary" style={{ marginTop: '0.5rem', width: '100%' }} onClick={download}>
-                            ⬇ Download {resultName}
+                            Download {resultName}
                         </button>
                     </div>
                 )}
