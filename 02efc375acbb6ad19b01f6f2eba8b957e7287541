@@ -1,0 +1,27 @@
+ui/src/index.css
+  5d36dcafd6090da9 2-4,8,10-14,16-18,20-23,27-29,31-34,42,57,61,66,83-84,140,143-145,152,177,179,181,185,188,191,195,218-219,222,224-225,231,233,236-237,241-242,244,247-251,261,263-264,301-303,305,307,309,317-320,324,328,338,340-342,449,451-453,497,501,528,532,726-833,836,840,843-845,848-849,852-854,857-859,862-863,868-880,883-884,887-888,1041,1045,1085,1088,1092
+CLAUDE.md
+  5d36dcafd6090da9 333-396
+ui/src/App.jsx
+  5d36dcafd6090da9 181-185,187,189-190,193-194,203-204,217-231,235-253,277-307
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.1.4",
+  "base_commit_sha": "02efc375acbb6ad19b01f6f2eba8b957e7287541",
+  "prompts": {
+    "5d36dcafd6090da9": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "e6a7cede-0521-4149-8400-cd60546dd558",
+        "model": "claude-sonnet-4-6"
+      },
+      "human_author": "Derek Wingard <derekwingard@gmail.com>",
+      "messages": [],
+      "total_additions": 395,
+      "total_deletions": 190,
+      "accepted_lines": 373,
+      "overriden_lines": 0
+    }
+  }
+}
