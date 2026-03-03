@@ -1,5 +1,5 @@
-import { useEffect, useState } from 'react';
-import { BrowserRouter as Router, Routes, Route, NavLink, Navigate, useSearchParams, useNavigate, Link } from 'react-router-dom';
+import { useEffect, useState, Component } from 'react';
+import { BrowserRouter as Router, Routes, Route, NavLink, Navigate, useSearchParams, useNavigate, Link, useLocation } from 'react-router-dom';
 import { useUser, useAuth } from '@clerk/clerk-react';
 import { AuthProvider, useAuthContext } from './AuthContext.jsx';
 import SignInModal from './components/SignInModal.jsx';
@@ -14,6 +14,68 @@ import KaraokeTab from './components/KaraokeTab.jsx';
 import FormatConverterTab from './components/FormatConverterTab.jsx';
 import AudioAnalyzerTab from './components/AudioAnalyzerTab.jsx';
 import MyFilesTab from './components/MyFilesTab.jsx';
+
+// ── Route Error Boundary ────────────────────────────────────────────────────
+// Catches render errors inside individual route components so a crash on one
+// page doesn't unmount the entire React tree and break navigation.
+class RouteErrorBoundary extends Component {
+    constructor(props) {
+        super(props);
+        this.state = { error: null };
+    }
+
+    static getDerivedStateFromError(error) {
+        return { error };
+    }
+
+    render() {
+        if (this.state.error) {
+            return (
+                <div style={{ padding: '2.5rem 2rem' }}>
+                    <div style={{
+                        background: '#fff0f0',
+                        border: '1px solid #fca5a5',
+                        borderRadius: '0.75rem',
+                        padding: '1.5rem 2rem',
+                        maxWidth: 680,
+                        margin: '0 auto',
+                    }}>
+                        <h2 style={{ margin: '0 0 0.5rem', color: '#dc2626', fontSize: '1.1rem' }}>
+                            ⚠ Page failed to render
+                        </h2>
+                        <pre style={{
+                            color: '#7f1d1d',
+                            fontSize: '0.8rem',
+                            whiteSpace: 'pre-wrap',
+                            wordBreak: 'break-word',
+                            margin: '0.75rem 0 1rem',
+                            background: '#fee2e2',
+                            padding: '0.75rem',
+                            borderRadius: '0.4rem',
+                        }}>
+                            {this.state.error?.stack || this.state.error?.message || String(this.state.error)}
+                        </pre>
+                        <p style={{ margin: 0, color: '#64748b', fontSize: '0.9rem' }}>
+                            Navigate to another page to continue. Copy the error above and report it.
+                        </p>
+                    </div>
+                </div>
+            );
+        }
+        return this.props.children;
+    }
+}
+
+// Resets the error boundary whenever the route path changes so errors on one
+// page don't bleed into other pages.
+function RouteErrorBoundaryWrapper({ children }) {
+    const location = useLocation();
+    return (
+        <RouteErrorBoundary key={location.pathname}>
+            {children}
+        </RouteErrorBoundary>
+    );
+}
 
 // ── CheckoutReturn ─────────────────────────────────────────────────────────
 // Rendered at /checkout?session_id=... after Stripe redirects back.
@@ -170,18 +232,20 @@ function AppInner() {
 
                 {/* ── Page Content ────────────────────────────── */}
                 <main className="main-content">
-                    <Routes>
-                        <Route path="/" element={<Navigate to="/synctag" replace />} />
-                        <Route path="/checkout" element={<CheckoutReturn />} />
-                        <Route path="/synctag" element={<SyncTagTab />} />
-                        <Route path="/separator" element={<StemSeparatorTab />} />
-                        <Route path="/vocal-remover" element={<KaraokeTab />} />
-                        <Route path="/analyzer" element={<AudioAnalyzerTab />} />
-                        <Route path="/cutter" element={<AudioCutterTab />} />
-                        <Route path="/joiner" element={<AudioJoinerTab />} />
-                        <Route path="/converter" element={<FormatConverterTab />} />
-                        <Route path="/my-files" element={<MyFilesTab />} />
-                    </Routes>
+                    <RouteErrorBoundaryWrapper>
+                        <Routes>
+                            <Route path="/" element={<Navigate to="/synctag" replace />} />
+                            <Route path="/checkout" element={<CheckoutReturn />} />
+                            <Route path="/synctag" element={<SyncTagTab />} />
+                            <Route path="/separator" element={<StemSeparatorTab />} />
+                            <Route path="/vocal-remover" element={<KaraokeTab />} />
+                            <Route path="/analyzer" element={<AudioAnalyzerTab />} />
+                            <Route path="/cutter" element={<AudioCutterTab />} />
+                            <Route path="/joiner" element={<AudioJoinerTab />} />
+                            <Route path="/converter" element={<FormatConverterTab />} />
+                            <Route path="/my-files" element={<MyFilesTab />} />
+                        </Routes>
+                    </RouteErrorBoundaryWrapper>
                 </main>
             </div>
 

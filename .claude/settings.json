@@ -6,7 +6,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 .claude/hooks/post-build-bugs.py"
+            "command": "python3 $(git -C \"${PWD}\" rev-parse --show-toplevel)/.claude/hooks/post-build-bugs.py"
           }
         ]
       }
