@@ -1,0 +1,49 @@
+ui/src/components/AudioAnalyzerTab.jsx
+  4c075176726f9a2e 3,10,45
+AGENT-CONTEXT/BackendExecution.md
+  4c075176726f9a2e 9-28
+ui/src/components/AudioCutterTab.jsx
+  4c075176726f9a2e 5,24,227
+ui/src/components/StemSeparatorTab.jsx
+  4c075176726f9a2e 5,37,109
+ui/src/components/FormatConverterTab.jsx
+  4c075176726f9a2e 3,21,66
+ui/src/components/AudioJoinerTab.jsx
+  4c075176726f9a2e 3,12,67
+.claude/hooks/post-build-bugs.py
+  4c075176726f9a2e 1-85
+.claude/settings.json
+  4c075176726f9a2e 1-15
+api/main.py
+  4c075176726f9a2e 1006-1013
+ui/src/AuthContext.jsx
+  4c075176726f9a2e 48,51-52,66-69,77-87,94-102
+ui/src/components/KaraokeTab.jsx
+  4c075176726f9a2e 4,12,76
+AGENT-CONTEXT/AGENT-CONTEXT.md
+  4c075176726f9a2e 12,14,120,129
+AGENT-CONTEXT/FrontendClient.md
+  4c075176726f9a2e 1-18
+ui/src/components/SyncTagTab.jsx
+  4c075176726f9a2e 5,13,91
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.1.4",
+  "base_commit_sha": "4b199a412079bef3edf5e2e616658c45cade2aa9",
+  "prompts": {
+    "4c075176726f9a2e": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "34c31bd3-5266-49c9-bbf0-ae5a957e7908",
+        "model": "claude-sonnet-4-6"
+      },
+      "human_author": "Derek Wingard <derekwingard@gmail.com>",
+      "messages": [],
+      "total_additions": 209,
+      "total_deletions": 36,
+      "accepted_lines": 200,
+      "overriden_lines": 0
+    }
+  }
+}
