@@ -487,10 +487,13 @@ function SmartSearch({ getToken, onDelete, onDownloadFile, isPremiumUser, onPrem
     const [results, setResults] = useState([]);
     const [hasMore, setHasMore] = useState(false);
     const [searching, setSearching] = useState(false);
+    const [loadingMore, setLoadingMore] = useState(false);
     const [dragover, setDragover] = useState(false);
     const [selectedIds, setSelectedIds] = useState(new Set());
     const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
     const [deletingBulk, setDeletingBulk] = useState(false);
+    const [searched, setSearched] = useState(false);
+    const [searchError, setSearchError] = useState(null);
     const fileRef = useRef(null);
 
     useEffect(() => {
@@ -500,7 +503,14 @@ function SmartSearch({ getToken, onDelete, onDownloadFile, isPremiumUser, onPrem
 
     const search = useCallback(async (offset = 0) => {
         if (!queryFile) return;
-        setSearching(true);
+        const isInitial = offset === 0;
+        if (isInitial) {
+            setSearching(true);
+            setSearchError(null);
+            setSearched(false);
+        } else {
+            setLoadingMore(true);
+        }
         try {
             const form = new FormData();
             form.append('audio', queryFile);
@@ -513,10 +523,13 @@ function SmartSearch({ getToken, onDelete, onDownloadFile, isPremiumUser, onPrem
                 body: form,
                 headers: { Authorization: `Bearer ${t}` },
             });
-            if (!resp.ok) throw new Error(`API ${resp.status}: ${await resp.text()}`);
+            if (!resp.ok) {
+                const msg = await resp.text().catch(() => resp.statusText);
+                throw new Error(msg || `HTTP ${resp.status}`);
+            }
             const data = await resp.json();
 
-            if (offset === 0) {
+            if (isInitial) {
                 setResults(data.results || []);
                 setSelectedIds(new Set());
             } else {
@@ -525,11 +538,14 @@ function SmartSearch({ getToken, onDelete, onDownloadFile, isPremiumUser, onPrem
                     return [...prev, ...(data.results || []).filter(r => !seen.has(r.id))];
                 });
             }
-            setHasMore(data.has_more || false);
+            setHasMore(data.has_more ?? false);
+            setSearched(true);
         } catch (e) {
             console.error('[SmartSearch] error:', e);
+            setSearchError(e.message || 'Search failed. Please try again.');
         } finally {
             setSearching(false);
+            setLoadingMore(false);
         }
     }, [getToken, queryFile]);
 
@@ -575,7 +591,13 @@ function SmartSearch({ getToken, onDelete, onDownloadFile, isPremiumUser, onPrem
                     onDragLeave={() => setDragover(false)}
                     onDrop={e => {
                         e.preventDefault(); setDragover(false);
-                        if (e.dataTransfer.files[0]) setQueryFile(e.dataTransfer.files[0]);
+                        if (e.dataTransfer.files[0]) {
+                            setQueryFile(e.dataTransfer.files[0]);
+                            setSearched(false);
+                            setSearchError(null);
+                            setResults([]);
+                            setHasMore(false);
+                        }
                     }}
                 >
                     <span className="icon" style={{ fontSize: '1.8rem' }}>🎵</span>
@@ -584,7 +606,15 @@ function SmartSearch({ getToken, onDelete, onDownloadFile, isPremiumUser, onPrem
                     <input
                         ref={fileRef} type="file" hidden
                         accept=".wav,.flac,.mp3,.aac"
-                        onChange={e => e.target.files[0] && setQueryFile(e.target.files[0])}
+                        onChange={e => {
+                            if (e.target.files[0]) {
+                                setQueryFile(e.target.files[0]);
+                                setSearched(false);
+                                setSearchError(null);
+                                setResults([]);
+                                setHasMore(false);
+                            }
+                        }}
                     />
                 </div>
 
@@ -613,11 +643,29 @@ function SmartSearch({ getToken, onDelete, onDownloadFile, isPremiumUser, onPrem
                     />
                 )}
 
+                {/* Error */}
+                {searchError && (
+                    <div style={{
+                        background: '#fef2f2', border: '1px solid #fca5a5',
+                        borderRadius: 'var(--radius-sm)', padding: '0.65rem 0.875rem',
+                        color: '#dc2626', fontSize: '0.875rem', marginBottom: '1rem',
+                    }}>
+                        ⚠️ {searchError}
+                    </div>
+                )}
+
+                {/* No results */}
+                {searched && !searching && results.length === 0 && !searchError && (
+                    <div style={{ textAlign: 'center', color: 'var(--text-muted)', padding: '1.5rem 0', fontSize: '0.9rem' }}>
+                        No matching files found in your library.
+                    </div>
+                )}
+
                 {/* Results */}
                 {results.length > 0 && (
                     <div>
                         <div style={{ fontSize: '0.78rem', color: 'var(--text-muted)', marginBottom: '0.75rem', fontWeight: 600 }}>
-                            {results.length} result{results.length !== 1 ? 's' : ''} found
+                            Showing {results.length} result{results.length !== 1 ? 's' : ''}{hasMore ? '' : ' — all results'}
                         </div>
                         {results.map(r => {
                             const proc = PROCESS_META[r.process_type] || { color: '#888', icon: '🎵', label: r.process_type };
@@ -659,11 +707,11 @@ function SmartSearch({ getToken, onDelete, onDownloadFile, isPremiumUser, onPrem
                         {hasMore && (
                             <button
                                 className="btn btn-secondary"
-                                style={{ width: '100%', marginTop: '0.25rem' }}
-                                disabled={searching}
+                                style={{ width: '100%', marginTop: '0.5rem' }}
+                                disabled={loadingMore || searching}
                                 onClick={() => search(results.length)}
                             >
-                                {searching ? '⏳ Loading…' : '+ 10 More'}
+                                {loadingMore ? '⏳ Loading…' : '+ 10 More'}
                             </button>
                         )}
                     </div>

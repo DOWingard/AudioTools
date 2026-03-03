@@ -215,6 +215,17 @@ function AppLayout() {
                         </nav>
 
                         <div className="top-bar-right">
+                            <a
+                                href="mailto:support@email.com"
+                                className="auth-btn support-btn"
+                                style={{
+                                    textDecoration: 'none',
+                                    display: 'inline-flex',
+                                    alignItems: 'center',
+                                }}
+                            >
+                                Support
+                            </a>
                             <UserMenu />
                             {/* Hamburger — visible on mobile only */}
                             <button
@@ -251,23 +262,41 @@ function AppLayout() {
                     </nav>
                 )}
 
-                {/* ── Page Content ────────────────────────────── */}
-                <main className="main-content">
-                    <RouteErrorBoundaryWrapper>
-                        <Routes>
-                            <Route path="/" element={<Navigate to="/synctag" replace />} />
-                            <Route path="/checkout" element={<CheckoutReturn />} />
-                            <Route path="/synctag" element={<SyncTagTab />} />
-                            <Route path="/separator" element={<StemSeparatorTab />} />
-                            <Route path="/vocal-remover" element={<KaraokeTab />} />
-                            <Route path="/analyzer" element={<AudioAnalyzerTab />} />
-                            <Route path="/cutter" element={<AudioCutterTab />} />
-                            <Route path="/joiner" element={<AudioJoinerTab />} />
-                            <Route path="/converter" element={<FormatConverterTab />} />
-                            <Route path="/my-files" element={<MyFilesTab />} />
-                        </Routes>
-                    </RouteErrorBoundaryWrapper>
-                </main>
+                <div className="app-body-container">
+                    {/* ── Sidebar (Desktop only) ──────────────────── */}
+                    <aside className="side-nav">
+                        <nav className="side-nav-inner" aria-label="Side navigation">
+                            {ROUTES.map((route) => (
+                                <NavLink
+                                    key={route.id}
+                                    to={route.path}
+                                    className={({ isActive }) => `side-nav-link ${isActive ? 'active' : ''}`}
+                                    onClick={() => window.dispatchEvent(new CustomEvent('waveform:stop-all'))}
+                                >
+                                    {route.label}
+                                </NavLink>
+                            ))}
+                        </nav>
+                    </aside>
+
+                    {/* ── Page Content ────────────────────────────── */}
+                    <main className="main-content">
+                        <RouteErrorBoundaryWrapper>
+                            <Routes>
+                                <Route path="/" element={<Navigate to="/synctag" replace />} />
+                                <Route path="/checkout" element={<CheckoutReturn />} />
+                                <Route path="/synctag" element={<SyncTagTab />} />
+                                <Route path="/separator" element={<StemSeparatorTab />} />
+                                <Route path="/vocal-remover" element={<KaraokeTab />} />
+                                <Route path="/analyzer" element={<AudioAnalyzerTab />} />
+                                <Route path="/cutter" element={<AudioCutterTab />} />
+                                <Route path="/joiner" element={<AudioJoinerTab />} />
+                                <Route path="/converter" element={<FormatConverterTab />} />
+                                <Route path="/my-files" element={<MyFilesTab />} />
+                            </Routes>
+                        </RouteErrorBoundaryWrapper>
+                    </main>
+                </div>
             </div>
 
             {/* ── Modals ──────────────────────────────────── */}
