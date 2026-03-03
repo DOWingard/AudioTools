@@ -1,0 +1,41 @@
+ui/src/components/AudioJoinerTab.jsx
+  b712997742384a29 3-4,10,17,39-44,142,147-153
+ui/src/components/MyFilesTab.jsx
+  b712997742384a29 852,890-892
+ui/src/AuthContext.jsx
+  b712997742384a29 12-13,31,91-148
+ui/src/components/StorageConfirmModal.jsx
+  b712997742384a29 1-56
+ui/src/components/StemSeparatorTab.jsx
+  b712997742384a29 5-6,36,48,58-63,202-208,212
+ui/src/components/KaraokeTab.jsx
+  b712997742384a29 4-5,11,22,30-35,132,137-143
+ui/src/components/AudioCutterTab.jsx
+  b712997742384a29 5,7,23,41,183-188,357,362-368
+api/main.py
+  b712997742384a29 470-471,485-490,495-498,631,702-706,709,711-712,723,788,867,940,1012,1447-1462,1487-1490
+ui/src/components/FormatConverterTab.jsx
+  b712997742384a29 3-4,19,29,37-42,131,136-142
+ui/src/components/SyncTagTab.jsx
+  b712997742384a29 5-6,12,28,36-41,235,240-246
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.1.4",
+  "base_commit_sha": "423dbfcae6a028700c35033d212b5b14a1693a03",
+  "prompts": {
+    "b712997742384a29": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "fc5b4e5d-bd5e-4f26-99f2-b72564ca0f2d",
+        "model": "claude-sonnet-4-6"
+      },
+      "human_author": "Derek Wingard <derekwingard@gmail.com>",
+      "messages": [],
+      "total_additions": 313,
+      "total_deletions": 63,
+      "accepted_lines": 281,
+      "overriden_lines": 0
+    }
+  }
+}
