@@ -1,6 +1,7 @@
 import { useState, useRef } from 'react';
 import { useAuth } from '@clerk/clerk-react';
-import { useGatedRun } from '../AuthContext.jsx';
+import { useGatedRun, useStorageGuard } from '../AuthContext.jsx';
+import StorageConfirmModal from './StorageConfirmModal.jsx';
 
 const API_BASE = '/api';
 
@@ -15,6 +16,7 @@ const FORMATS = [
 
 export default function FormatConverterTab() {
     const requireAuth = useGatedRun();
+    const { checkBeforeProcess } = useStorageGuard();
     const { getToken } = useAuth();
     const [file, setFile] = useState(null);
     const [format, setFormat] = useState('mp3');
@@ -24,11 +26,18 @@ export default function FormatConverterTab() {
     const [error, setError] = useState('');
     const fileRef = useRef(null);
     const [dragover, setDragover] = useState(false);
+    const [storageConfirmMsg, setStorageConfirmMsg] = useState(null);
 
     const handleFile = (f) => {
         setFile(f);
         setResultUrl(null);
         setError('');
+    };
+
+    const handleProcess = async () => {
+        const msg = await checkBeforeProcess(1);
+        if (msg) { setStorageConfirmMsg(msg); return; }
+        run();
     };
 
     const run = async () => {
@@ -119,10 +128,18 @@ export default function FormatConverterTab() {
                     className="btn btn-primary"
                     style={{ marginTop: '1.5rem', width: '100%', justifyContent: 'center' }}
                     disabled={!file || loading}
-                    onClick={requireAuth(run)}
+                    onClick={requireAuth(handleProcess)}
                 >
                     {loading ? '⏳ Converting…' : `🔄 Convert to ${format.toUpperCase()}`}
                 </button>
+
+                {storageConfirmMsg && (
+                    <StorageConfirmModal
+                        message={storageConfirmMsg}
+                        onYes={() => { setStorageConfirmMsg(null); run(); }}
+                        onNo={() => setStorageConfirmMsg(null)}
+                    />
+                )}
 
                 {error && <p className="status-error" style={{ marginTop: '1rem' }}>❌ {error}</p>}
 

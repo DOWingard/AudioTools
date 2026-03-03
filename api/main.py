@@ -467,17 +467,8 @@ def _validate_audio_magic(path: Path) -> None:
     )
 
 
-async def _check_user_quota(user_id: str, subscription_type: str = "premium") -> None:
-    """Raise HTTP 429 if the user has reached their tier's file storage limit.
-
-    Limits:
-        standard → MAX_FILES_STANDARD (50)
-        premium  → unlimited
-    """
-    # Premium users have no file limit
-    if subscription_type == "premium":
-        return
-
+async def _get_user_file_count(user_id: str) -> int:
+    """Return the number of files stored in Qdrant for this user."""
     from qdrant_client.models import FieldCondition, Filter, MatchValue
 
     loop = asyncio.get_running_loop()
@@ -491,11 +482,20 @@ async def _check_user_quota(user_id: str, subscription_type: str = "premium") ->
             exact=False,
         ),
     )
-    if count_result.count >= MAX_FILES_STANDARD:
-        raise HTTPException(
-            status_code=429,
-            detail=f"Storage quota exceeded ({MAX_FILES_STANDARD} files maximum for standard plan). Upgrade to Premium for unlimited storage.",
-        )
+    return count_result.count
+
+
+async def _check_user_quota(user_id: str, subscription_type: str = "premium") -> bool:
+    """Return True if the user can store at least one more file, False if quota exceeded.
+
+    Limits:
+        standard → MAX_FILES_STANDARD (50)
+        premium  → unlimited
+    """
+    if subscription_type == "premium":
+        return True
+    count = await _get_user_file_count(user_id)
+    return count < MAX_FILES_STANDARD
 
 
 def _scroll_all(qdrant_client, collection: str, scroll_filter, with_vectors: bool = False) -> list:
@@ -628,12 +628,12 @@ async def tag_audio(
         if user_id:
             sub_type = await _get_subscription_type(token)
             if sub_type and sub_type != "free":
-                await _check_user_quota(user_id, sub_type)
-                job_id = str(_uuid.uuid4())
-                dest = _stage_file(user_id, "tag", job_id, tagged_path.name, tagged_path)
-                asyncio.create_task(
-                    _schedule_embed(dest, user_id, "tag", "tagged", tagged_path.name, job_id)
-                )
+                if await _check_user_quota(user_id, sub_type):
+                    job_id = str(_uuid.uuid4())
+                    dest = _stage_file(user_id, "tag", job_id, tagged_path.name, tagged_path)
+                    asyncio.create_task(
+                        _schedule_embed(dest, user_id, "tag", "tagged", tagged_path.name, job_id)
+                    )
 
         # Pack into ZIP
         buf = io.BytesIO()
@@ -699,9 +699,17 @@ async def separate_audio(
         if user_id:
             sub_type = await _get_subscription_type(token)
             if sub_type and sub_type != "free":
-                await _check_user_quota(user_id, sub_type)
+                current_count = await _get_user_file_count(user_id)
+                remaining_slots = (
+                    len(all_files)  # unlimited for premium
+                    if sub_type == "premium"
+                    else max(0, MAX_FILES_STANDARD - current_count)
+                )
                 job_id = str(_uuid.uuid4())
+                stems_saved = 0
                 for stem_key, filepath in all_files.items():
+                    if stems_saved >= remaining_slots:
+                        break
                     p = Path(filepath)
                     if p.exists():
                         subgroup = _stem_subgroup(stem_key)
@@ -712,6 +720,7 @@ async def separate_audio(
                                 Path(audio.filename or "input.wav").name or "input.wav", job_id,
                             )
                         )
+                        stems_saved += 1
 
         # Pack all existing stem files into ZIP
         buf = io.BytesIO()
@@ -776,12 +785,12 @@ async def cut_audio(
         if user_id:
             sub_type = await _get_subscription_type(token)
             if sub_type and sub_type != "free":
-                await _check_user_quota(user_id, sub_type)
-                job_id = str(_uuid.uuid4())
-                dest = _stage_file(user_id, "cut", job_id, output_path.name, output_path)
-                asyncio.create_task(
-                    _schedule_embed(dest, user_id, "cut", "trimmed", Path(audio.filename or "input.wav").name or "input.wav", job_id)
-                )
+                if await _check_user_quota(user_id, sub_type):
+                    job_id = str(_uuid.uuid4())
+                    dest = _stage_file(user_id, "cut", job_id, output_path.name, output_path)
+                    asyncio.create_task(
+                        _schedule_embed(dest, user_id, "cut", "trimmed", Path(audio.filename or "input.wav").name or "input.wav", job_id)
+                    )
 
         buf = io.BytesIO(output_path.read_bytes())
         return StreamingResponse(
@@ -855,13 +864,13 @@ async def join_audio(
         if user_id:
             sub_type = await _get_subscription_type(token)
             if sub_type and sub_type != "free":
-                await _check_user_quota(user_id, sub_type)
-                job_id = str(_uuid.uuid4())
-                dest = _stage_file(user_id, "join", job_id, "joined.wav", output_path)
-                original = ", ".join(f.filename or "input" for f in audio[:3])
-                asyncio.create_task(
-                    _schedule_embed(dest, user_id, "join", "joined", original, job_id)
-                )
+                if await _check_user_quota(user_id, sub_type):
+                    job_id = str(_uuid.uuid4())
+                    dest = _stage_file(user_id, "join", job_id, "joined.wav", output_path)
+                    original = ", ".join(f.filename or "input" for f in audio[:3])
+                    asyncio.create_task(
+                        _schedule_embed(dest, user_id, "join", "joined", original, job_id)
+                    )
 
         buf = io.BytesIO(output_path.read_bytes())
         return StreamingResponse(
@@ -928,12 +937,12 @@ async def karaoke_audio(
         if user_id:
             sub_type = await _get_subscription_type(token)
             if sub_type and sub_type != "free":
-                await _check_user_quota(user_id, sub_type)
-                job_id = str(_uuid.uuid4())
-                dest = _stage_file(user_id, "karaoke", job_id, output_path.name, output_path)
-                asyncio.create_task(
-                    _schedule_embed(dest, user_id, "karaoke", "instrumental", Path(audio.filename or "input.wav").name or "input.wav", job_id)
-                )
+                if await _check_user_quota(user_id, sub_type):
+                    job_id = str(_uuid.uuid4())
+                    dest = _stage_file(user_id, "karaoke", job_id, output_path.name, output_path)
+                    asyncio.create_task(
+                        _schedule_embed(dest, user_id, "karaoke", "instrumental", Path(audio.filename or "input.wav").name or "input.wav", job_id)
+                    )
 
         buf = io.BytesIO(output_path.read_bytes())
         return StreamingResponse(
@@ -1000,12 +1009,12 @@ async def convert_audio(
         if user_id:
             sub_type = await _get_subscription_type(token)
             if sub_type and sub_type != "free":
-                await _check_user_quota(user_id, sub_type)
-                job_id = str(_uuid.uuid4())
-                dest = _stage_file(user_id, "convert", job_id, output_path.name, output_path)
-                asyncio.create_task(
-                    _schedule_embed(dest, user_id, "convert", "converted", Path(audio.filename or "input.wav").name or "input.wav", job_id)
-                )
+                if await _check_user_quota(user_id, sub_type):
+                    job_id = str(_uuid.uuid4())
+                    dest = _stage_file(user_id, "convert", job_id, output_path.name, output_path)
+                    asyncio.create_task(
+                        _schedule_embed(dest, user_id, "convert", "converted", Path(audio.filename or "input.wav").name or "input.wav", job_id)
+                    )
 
         buf = io.BytesIO(output_path.read_bytes())
         return StreamingResponse(
@@ -1435,6 +1444,23 @@ async def list_files(authorization: str = Header(default=None)):
 
 
 # ---------------------------------------------------------------------------
+# GET /api/files/count — Lightweight file count for quota pre-check
+# ---------------------------------------------------------------------------
+
+@app.get("/api/files/count")
+async def count_user_files(authorization: str = Header(default=None)):
+    """Return the number of files stored for the authenticated user."""
+    if not authorization:
+        raise HTTPException(status_code=401, detail="Authorization required")
+    token = authorization.removeprefix("Bearer ").strip()
+    user_id = await _resolve_user_id(token)
+    if not user_id:
+        raise HTTPException(status_code=401, detail="Invalid or expired token")
+    count = await _get_user_file_count(user_id)
+    return JSONResponse({"count": count})
+
+
+# ---------------------------------------------------------------------------
 # POST /api/files/upload — Bulk upload files into the user's graph (premium)
 # ---------------------------------------------------------------------------
 
@@ -1458,7 +1484,11 @@ async def upload_files_to_graph(
     profile = await _require_premium_profile(token, required_type="premium")
     user_id = profile["clerk_id"]
 
-    await _check_user_quota(user_id, profile["subscription_type"])
+    if not await _check_user_quota(user_id, profile["subscription_type"]):
+        raise HTTPException(
+            status_code=429,
+            detail=f"Storage quota exceeded ({MAX_FILES_STANDARD} files maximum for standard plan). Upgrade to Premium for unlimited storage.",
+        )
     job_id = str(_uuid.uuid4())
     queued = 0
 

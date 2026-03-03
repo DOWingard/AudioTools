@@ -849,7 +849,7 @@ function PremiumFeatureOverlay({ onClose, onUpgrade, featureName }) {
 
 export default function MyFilesTab() {
     const { getToken, isSignedIn } = useAuth();
-    const { profile, openSubModal } = useAuthContext();
+    const { profile, openSubModal, setFileCount } = useAuthContext();
 
     // isPremiumUser: must have both an active subscription AND premium tier
     const isPremiumUser = !!(profile?.subscription_active && profile?.subscription_type === 'premium');
@@ -887,7 +887,9 @@ export default function MyFilesTab() {
             });
             if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
             const data = await resp.json();
-            setFiles(data.files || []);
+            const fetched = data.files || [];
+            setFiles(fetched);
+            setFileCount(fetched.length);
         } catch (e) {
             setFilesError(e.message);
         } finally {

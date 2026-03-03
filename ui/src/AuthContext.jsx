@@ -9,6 +9,8 @@ export function AuthProvider({ children }) {
     const [subModalOpen, setSubModalOpen] = useState(false);
     const [subModalPlan, setSubModalPlan] = useState(null);
     const [profile, setProfile] = useState(null);
+    // Cached file count for standard-tier quota pre-checks (null = not yet fetched)
+    const [fileCount, setFileCount] = useState(null);
 
     const openSignIn = useCallback(() => setSignInOpen(true), []);
     const closeSignIn = useCallback(() => setSignInOpen(false), []);
@@ -26,6 +28,7 @@ export function AuthProvider({ children }) {
             limitModalOpen, openLimitModal, closeLimitModal,
             subModalOpen, setSubModalOpen, subModalPlan, setSubModalPlan, openSubModal,
             profile, setProfile,
+            fileCount, setFileCount,
         }}>
             {children}
         </AuthContext.Provider>
@@ -83,6 +86,64 @@ export function useGatedRun() {
             return fn(...args);
         };
     };
+}
+
+const STANDARD_FILE_LIMIT = 50;
+
+/**
+ * Hook for processing tabs to check storage quota before starting a job.
+ * Returns checkBeforeProcess(outputFileCount) — resolves to:
+ *   null          → no dialog needed, proceed freely
+ *   string        → confirmation message; caller must show dialog
+ */
+export function useStorageGuard() {
+    const { profile, fileCount, setFileCount } = useAuthContext();
+    const { isSignedIn, getToken } = useAuth();
+
+    const isStandardUser = !!(
+        isSignedIn &&
+        profile?.subscription_active &&
+        profile?.subscription_type !== 'premium'
+    );
+
+    const fetchCount = useCallback(async () => {
+        try {
+            const token = await getToken();
+            const resp = await fetch('/api/files/count', {
+                headers: { Authorization: `Bearer ${token}` },
+            });
+            if (!resp.ok) return null;
+            const { count } = await resp.json();
+            setFileCount(count);
+            return count;
+        } catch {
+            return null; // fail open — backend enforces quota regardless
+        }
+    }, [getToken, setFileCount]);
+
+    const checkBeforeProcess = useCallback(async (outputFileCount = 1) => {
+        if (!isStandardUser) return null;
+
+        const count = fileCount !== null ? fileCount : await fetchCount();
+        if (count === null) return null; // fail open
+
+        if (count >= STANDARD_FILE_LIMIT) {
+            // Database full
+            const n = outputFileCount;
+            return `Database full, clear out ${n} file${n !== 1 ? 's' : ''} to save the results.`;
+        }
+
+        if (count + outputFileCount > STANDARD_FILE_LIMIT) {
+            // Partial save — only applies when outputFileCount > 1 (stem separator)
+            const willSave = STANDARD_FILE_LIMIT - count;
+            const clearOut = outputFileCount - willSave;
+            return `Only ${willSave}/${outputFileCount} files will save, clear out ${clearOut} file${clearOut !== 1 ? 's' : ''} to save the whole result.`;
+        }
+
+        return null; // under quota, no confirmation needed
+    }, [isStandardUser, fileCount, fetchCount]);
+
+    return { checkBeforeProcess };
 }
 
 /** Legacy alias kept for backward compat — just gates on sign-in, no quota */

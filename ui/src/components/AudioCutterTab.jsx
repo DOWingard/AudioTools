@@ -2,8 +2,9 @@ import { useState, useRef, useEffect, useCallback } from 'react';
 import WaveSurfer from 'wavesurfer.js';
 import RegionsPlugin from 'wavesurfer.js/dist/plugins/regions.esm.js';
 import { useAuth } from '@clerk/clerk-react';
-import { useGatedRun } from '../AuthContext.jsx';
+import { useGatedRun, useStorageGuard } from '../AuthContext.jsx';
 import WaveformPlayer from './WaveformPlayer.jsx';
+import StorageConfirmModal from './StorageConfirmModal.jsx';
 
 let _cutterInstanceId = 0;
 
@@ -19,6 +20,7 @@ function fmtTime(sec) {
 
 export default function AudioCutterTab() {
     const requireAuth = useGatedRun();
+    const { checkBeforeProcess } = useStorageGuard();
     const { getToken } = useAuth();
     const [file, setFile] = useState(null);
     const [audioBlob, setAudioBlob] = useState(null);
@@ -36,6 +38,7 @@ export default function AudioCutterTab() {
     const [error, setError] = useState('');
     const fileRef = useRef(null);
     const [dragover, setDragover] = useState(false);
+    const [storageConfirmMsg, setStorageConfirmMsg] = useState(null);
 
     const waveContainerRef = useRef(null);
     const wsRef = useRef(null);
@@ -177,6 +180,12 @@ export default function AudioCutterTab() {
     }, [playing]);
 
     // ── Cut API call ──────────────────────────────────────────────────
+    const handleProcess = async () => {
+        const msg = await checkBeforeProcess(1);
+        if (msg) { setStorageConfirmMsg(msg); return; }
+        run();
+    };
+
     const run = async () => {
         if (!file) return;
         window.dispatchEvent(new CustomEvent('waveform:stop-all'));
@@ -345,10 +354,18 @@ export default function AudioCutterTab() {
                     className="btn btn-primary"
                     style={{ marginTop: '1.5rem', width: '100%', justifyContent: 'center' }}
                     disabled={!file || loading}
-                    onClick={requireAuth(run)}
+                    onClick={requireAuth(handleProcess)}
                 >
                     {loading ? '⏳ Cutting…' : '✂️ Cut Audio'}
                 </button>
+
+                {storageConfirmMsg && (
+                    <StorageConfirmModal
+                        message={storageConfirmMsg}
+                        onYes={() => { setStorageConfirmMsg(null); run(); }}
+                        onNo={() => setStorageConfirmMsg(null)}
+                    />
+                )}
 
                 {loading && (
                     <div style={{ marginTop: '1rem' }}>

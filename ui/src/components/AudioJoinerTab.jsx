@@ -1,17 +1,20 @@
 import { useState, useRef } from 'react';
 import { useAuth } from '@clerk/clerk-react';
-import { useGatedRun } from '../AuthContext.jsx';
+import { useGatedRun, useStorageGuard } from '../AuthContext.jsx';
+import StorageConfirmModal from './StorageConfirmModal.jsx';
 
 const API_BASE = '/api';
 
 export default function AudioJoinerTab() {
     const requireAuth = useGatedRun();
+    const { checkBeforeProcess } = useStorageGuard();
     const { getToken } = useAuth();
     const [files, setFiles] = useState([]);
     const [loading, setLoading] = useState(false);
     const [resultUrl, setResultUrl] = useState(null);
     const [error, setError] = useState('');
     const fileRef = useRef(null);
+    const [storageConfirmMsg, setStorageConfirmMsg] = useState(null);
 
     const addFiles = (newFiles) => {
         setFiles((prev) => [...prev, ...Array.from(newFiles)]);
@@ -31,6 +34,12 @@ export default function AudioJoinerTab() {
             [arr[idx], arr[target]] = [arr[target], arr[idx]];
             return arr;
         });
+    };
+
+    const handleProcess = async () => {
+        const msg = await checkBeforeProcess(1);
+        if (msg) { setStorageConfirmMsg(msg); return; }
+        run();
     };
 
     const run = async () => {
@@ -130,10 +139,18 @@ export default function AudioJoinerTab() {
                     className="btn btn-primary"
                     style={{ marginTop: '1.5rem', width: '100%', justifyContent: 'center' }}
                     disabled={files.length < 2 || loading}
-                    onClick={requireAuth(run)}
+                    onClick={requireAuth(handleProcess)}
                 >
                     {loading ? '⏳ Joining…' : `🔗 Join ${files.length} Files`}
                 </button>
+
+                {storageConfirmMsg && (
+                    <StorageConfirmModal
+                        message={storageConfirmMsg}
+                        onYes={() => { setStorageConfirmMsg(null); run(); }}
+                        onNo={() => setStorageConfirmMsg(null)}
+                    />
+                )}
 
                 {error && <p className="status-error" style={{ marginTop: '1rem' }}>❌ {error}</p>}
 

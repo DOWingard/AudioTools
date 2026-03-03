@@ -1,12 +1,14 @@
 import { useState, useRef } from 'react';
 import { useAuth } from '@clerk/clerk-react';
 import WaveformPlayer from './WaveformPlayer.jsx';
-import { useGatedRun } from '../AuthContext.jsx';
+import { useGatedRun, useStorageGuard } from '../AuthContext.jsx';
+import StorageConfirmModal from './StorageConfirmModal.jsx';
 
 const API_BASE = '/api';
 
 export default function KaraokeTab() {
     const requireAuth = useGatedRun();
+    const { checkBeforeProcess } = useStorageGuard();
     const { getToken } = useAuth();
     const [file, setFile] = useState(null);
     const [loading, setLoading] = useState(false);
@@ -17,11 +19,18 @@ export default function KaraokeTab() {
     const [error, setError] = useState('');
     const fileRef = useRef(null);
     const [dragover, setDragover] = useState(false);
+    const [storageConfirmMsg, setStorageConfirmMsg] = useState(null);
 
     const handleFile = (f) => {
         setFile(f);
         setResultBlob(null);
         setError('');
+    };
+
+    const handleProcess = async () => {
+        const msg = await checkBeforeProcess(1);
+        if (msg) { setStorageConfirmMsg(msg); return; }
+        run();
     };
 
     const run = async () => {
@@ -120,10 +129,18 @@ export default function KaraokeTab() {
                     className="btn btn-primary"
                     style={{ marginTop: '1.5rem', width: '100%', justifyContent: 'center' }}
                     disabled={!file || loading}
-                    onClick={requireAuth(run)}
+                    onClick={requireAuth(handleProcess)}
                 >
                     {loading ? '⏳ Processing…' : '🎤 Remove Vocals'}
                 </button>
+
+                {storageConfirmMsg && (
+                    <StorageConfirmModal
+                        message={storageConfirmMsg}
+                        onYes={() => { setStorageConfirmMsg(null); run(); }}
+                        onNo={() => setStorageConfirmMsg(null)}
+                    />
+                )}
 
                 {loading && (
                     <div style={{ marginTop: '1rem' }}>

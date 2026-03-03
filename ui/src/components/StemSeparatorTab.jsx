@@ -2,7 +2,8 @@ import { useState, useRef } from 'react';
 import JSZip from 'jszip';
 import { useAuth } from '@clerk/clerk-react';
 import WaveformPlayer from './WaveformPlayer.jsx';
-import { useGatedRun } from '../AuthContext.jsx';
+import { useGatedRun, useStorageGuard } from '../AuthContext.jsx';
+import StorageConfirmModal from './StorageConfirmModal.jsx';
 
 const API_BASE = '/api';
 
@@ -32,6 +33,7 @@ const GROUP_META = {
 
 export default function StemSeparatorTab() {
     const requireAuth = useGatedRun();
+    const { checkBeforeProcess } = useStorageGuard();
     const { getToken } = useAuth();
     const [file, setFile] = useState(null);
     const [loading, setLoading] = useState(false);
@@ -43,6 +45,7 @@ export default function StemSeparatorTab() {
     const [status, setStatus] = useState('');
     const fileRef = useRef(null);
     const [dragover, setDragover] = useState(false);
+    const [storageConfirmMsg, setStorageConfirmMsg] = useState(null);
 
     const handleFile = (f) => {
         setFile(f);
@@ -50,6 +53,12 @@ export default function StemSeparatorTab() {
         setZipBlob(null);
         setError('');
         setStatus('');
+    };
+
+    const handleProcess = async () => {
+        const msg = await checkBeforeProcess(STEM_LAYOUT.length);
+        if (msg) { setStorageConfirmMsg(msg); return; }
+        run();
     };
 
     const run = async () => {
@@ -190,10 +199,17 @@ export default function StemSeparatorTab() {
                     </div>
 
                     <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem', flex: '0 0 auto', justifyContent: 'center' }}>
+                        {storageConfirmMsg && (
+                            <StorageConfirmModal
+                                message={storageConfirmMsg}
+                                onYes={() => { setStorageConfirmMsg(null); run(); }}
+                                onNo={() => setStorageConfirmMsg(null)}
+                            />
+                        )}
                         <button
                             className="btn btn-primary"
                             disabled={!file || loading}
-                            onClick={requireAuth(run)}
+                            onClick={requireAuth(handleProcess)}
                             style={{ whiteSpace: 'nowrap', width: '100%' }}
                         >
                             {loading ? '⏳ Processing…' : '🔀 Separate Stems'}

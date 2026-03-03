@@ -2,12 +2,14 @@ import { useState, useRef } from 'react';
 import JSZip from 'jszip';
 import { useAuth } from '@clerk/clerk-react';
 import WaveformPlayer from './WaveformPlayer.jsx';
-import { useGatedRun } from '../AuthContext.jsx';
+import { useGatedRun, useStorageGuard } from '../AuthContext.jsx';
+import StorageConfirmModal from './StorageConfirmModal.jsx';
 
 const API_BASE = '/api';
 
 export default function SyncTagTab() {
     const requireAuth = useGatedRun();
+    const { checkBeforeProcess } = useStorageGuard();
     const { getToken } = useAuth();
     const [file, setFile] = useState(null);
     const [title, setTitle] = useState('');
@@ -23,11 +25,18 @@ export default function SyncTagTab() {
     const [error, setError] = useState('');
     const fileRef = useRef(null);
     const [dragover, setDragover] = useState(false);
+    const [storageConfirmMsg, setStorageConfirmMsg] = useState(null);
 
     const handleFile = (f) => {
         setFile(f);
         setResult(null);
         setError('');
+    };
+
+    const handleProcess = async () => {
+        const msg = await checkBeforeProcess(1);
+        if (msg) { setStorageConfirmMsg(msg); return; }
+        run();
     };
 
     const run = async () => {
@@ -223,10 +232,18 @@ export default function SyncTagTab() {
                             className="btn btn-primary"
                             style={{ marginTop: '1.5rem', width: '100%', justifyContent: 'center' }}
                             disabled={!file || loading}
-                            onClick={requireAuth(run)}
+                            onClick={requireAuth(handleProcess)}
                         >
                             {loading ? '⏳ Processing…' : '🚀 Analyze & Tag Track'}
                         </button>
+
+                        {storageConfirmMsg && (
+                            <StorageConfirmModal
+                                message={storageConfirmMsg}
+                                onYes={() => { setStorageConfirmMsg(null); run(); }}
+                                onNo={() => setStorageConfirmMsg(null)}
+                            />
+                        )}
 
                         {loading && (
                             <div style={{ marginTop: '1.5rem' }}>
