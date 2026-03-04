@@ -1,0 +1,23 @@
+tests/test_auth_unit.py
+  62ebf157e4038fbd 23
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.1.4",
+  "base_commit_sha": "8445b969ee8affc127f886848a542de697679eef",
+  "prompts": {
+    "62ebf157e4038fbd": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "a1a3ab7f-e02e-40ba-ae45-f8faeb2211d4",
+        "model": "claude-sonnet-4-6"
+      },
+      "human_author": "Derek Wingard <derekwingard@gmail.com>",
+      "messages": [],
+      "total_additions": 1,
+      "total_deletions": 1,
+      "accepted_lines": 1,
+      "overriden_lines": 0
+    }
+  }
+}
