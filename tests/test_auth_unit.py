@@ -20,7 +20,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 # load_dotenv() (called in auth/main.py) will NOT override this because python-dotenv
 # respects already-set environment variables by default.
 os.environ.setdefault("DATABASE_URL", "postgresql://test:test@localhost/testdb")
-os.environ.setdefault("CLERK_WEBHOOK_SECRET", "test-webhook-secret")
+os.environ.setdefault("CLERK_WEBHOOK_SECRET", "dGVzdA")  # valid base64; svix appends "==" internally
 
 
 # ---------------------------------------------------------------------------
