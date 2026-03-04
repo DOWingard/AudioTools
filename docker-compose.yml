@@ -52,9 +52,9 @@ services:
     image: postgres:17-alpine
     container_name: syntag_postgres
     environment:
-      POSTGRES_USER: ${POSTGRES_USER:-syntag}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-syntag_secret}
-      POSTGRES_DB: ${POSTGRES_DB:-syntag}
+      POSTGRES_USER: ${POSTGRES_USER:-audiotility}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-Riddim4Life42069!}
+      POSTGRES_DB: ${POSTGRES_DB:-audiotility}
     volumes:
       - postgres_data:/var/lib/postgresql/data
       - ./database/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
@@ -62,7 +62,7 @@ services:
       - "5434:5432"
     restart: unless-stopped
     healthcheck:
-      test: [ "CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-syntag}" ]
+      test: [ "CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-audiotility}" ]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -76,7 +76,7 @@ services:
       - "8001:8001"
     env_file: .env
     environment:
-      - DATABASE_URL=postgresql://${POSTGRES_USER:-syntag}:${POSTGRES_PASSWORD:-syntag_secret}@postgres:5432/${POSTGRES_DB:-syntag}
+      - DATABASE_URL=postgresql://${POSTGRES_USER:-audiotility}:${POSTGRES_PASSWORD:-Riddim4Life42069!}@postgres:5432/${POSTGRES_DB:-audiotility}
       - COMPUTE_API_URL=http://compute:8000
       - INTERNAL_SECRET=${INTERNAL_SECRET:-}
     depends_on:
