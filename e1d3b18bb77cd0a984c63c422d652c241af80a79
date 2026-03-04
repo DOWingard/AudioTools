@@ -1,0 +1,25 @@
+ui/src/components/SignInModal.jsx
+  3a9e7d86861374e7 5,14-15
+ui/src/AuthContext.jsx
+  3a9e7d86861374e7 8,16-19,33
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.1.4",
+  "base_commit_sha": "e1d3b18bb77cd0a984c63c422d652c241af80a79",
+  "prompts": {
+    "3a9e7d86861374e7": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "a999c31d-dbdb-4ff0-b261-156157af9f20",
+        "model": "claude-sonnet-4-6"
+      },
+      "human_author": "Derek Wingard <derekwingard@gmail.com>",
+      "messages": [],
+      "total_additions": 9,
+      "total_deletions": 5,
+      "accepted_lines": 9,
+      "overriden_lines": 0
+    }
+  }
+}
