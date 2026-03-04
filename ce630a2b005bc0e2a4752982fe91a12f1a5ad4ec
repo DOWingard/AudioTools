@@ -1,0 +1,23 @@
+tests/conftest.py
+  62ebf157e4038fbd 7,9,14,16,21,23,31-32
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.1.4",
+  "base_commit_sha": "ce630a2b005bc0e2a4752982fe91a12f1a5ad4ec",
+  "prompts": {
+    "62ebf157e4038fbd": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "a1a3ab7f-e02e-40ba-ae45-f8faeb2211d4",
+        "model": "claude-sonnet-4-6"
+      },
+      "human_author": "Derek Wingard <derekwingard@gmail.com>",
+      "messages": [],
+      "total_additions": 8,
+      "total_deletions": 6,
+      "accepted_lines": 8,
+      "overriden_lines": 0
+    }
+  }
+}
