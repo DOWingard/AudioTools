@@ -11,8 +11,8 @@ export default function SignInModal() {
             <div className="modal-content" onClick={(e) => e.stopPropagation()}>
                 <button className="modal-close" onClick={closeSignIn} aria-label="Close">✕</button>
                 <SignIn
-                    afterSignInUrl="/"
-                    afterSignUpUrl="/"
+                    routing="hash"
+                    fallbackRedirectUrl="/"
                     appearance={{
                         elements: {
                             rootBox: { width: '100%' },
