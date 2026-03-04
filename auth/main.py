@@ -58,7 +58,9 @@ JWKS_TTL = 3600  # 1 hour
 async def _refresh_jwks() -> dict:
     """Fetch Clerk JWKS via async httpx and update the in-process cache."""
     global _jwks_cache, _jwks_fetched_at
-    url = f"{_clerk_fapi_url()}/.well-known/jwks.json"
+    # CLERK_JWKS_URL overrides auto-derivation — useful when the Clerk FAPI domain
+    # is unreachable from the server (e.g. dev-instance DNS not resolving).
+    url = os.environ.get("CLERK_JWKS_URL") or f"{_clerk_fapi_url()}/.well-known/jwks.json"
     async with httpx.AsyncClient() as client:
         resp = await client.get(url, timeout=10)
         resp.raise_for_status()
@@ -101,8 +103,12 @@ async def lifespan(app: FastAPI):
     db_pool = await asyncpg.create_pool(DATABASE_URL, min_size=2, max_size=10)
     log.info("DB pool created")
 
-    # Pre-warm Clerk JWKS so no request ever blocks on the initial fetch
-    await _refresh_jwks()
+    # Pre-warm Clerk JWKS — non-fatal so auth starts even if Clerk is temporarily
+    # unreachable. verify_clerk_token will retry on the first incoming request.
+    try:
+        await _refresh_jwks()
+    except Exception as exc:
+        log.warning("JWKS pre-warm failed (will retry on first request): %s", exc)
 
     # Reset free-tier quota every day at 04:00 PST
     scheduler.add_job(
@@ -157,6 +163,9 @@ async def verify_clerk_token(authorization: str) -> dict:
         raise HTTPException(status_code=401, detail="Invalid authorization header")
     token = authorization.removeprefix("Bearer ").strip()
     try:
+        # If pre-warm failed at startup, try loading JWKS now on first request
+        if _jwks_cache is None:
+            await _refresh_jwks()
         payload = jwt.decode(token, _get_jwks(), algorithms=["RS256"], options={"verify_aud": False})
         return payload
     except JWTError as exc:
@@ -166,6 +175,8 @@ async def verify_clerk_token(authorization: str) -> dict:
             return jwt.decode(token, fresh_jwks, algorithms=["RS256"], options={"verify_aud": False})
         except JWTError:
             raise HTTPException(status_code=401, detail="Invalid or expired token")
+    except RuntimeError:
+        raise HTTPException(status_code=503, detail="Auth service not ready — JWKS unavailable")
 
 
 def _row_to_profile(row: asyncpg.Record) -> dict:
