@@ -83,6 +83,7 @@ def auth_client():
     mock_pool, mock_conn = _make_db_mock()
 
     with patch("asyncpg.create_pool", AsyncMock(return_value=mock_pool)), \
+         patch("auth.main._refresh_jwks", AsyncMock(return_value={"keys": []})), \
          patch("auth.main.scheduler") as mock_sched:
 
         mock_sched.add_job = MagicMock()
