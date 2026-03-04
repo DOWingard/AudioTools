@@ -1,0 +1,27 @@
+.github/workflows/deploy.yml
+  3a9e7d86861374e7 81-87
+auth/main.py
+  3a9e7d86861374e7 61-63,106-111,166-168,178-179
+docker-compose.yml
+  3a9e7d86861374e7 91
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.1.4",
+  "base_commit_sha": "29099f2aed5a080707601cf13672d68f57cc03cf",
+  "prompts": {
+    "3a9e7d86861374e7": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "a999c31d-dbdb-4ff0-b261-156157af9f20",
+        "model": "claude-sonnet-4-6"
+      },
+      "human_author": "Derek Wingard <derekwingard@gmail.com>",
+      "messages": [],
+      "total_additions": 22,
+      "total_deletions": 5,
+      "accepted_lines": 22,
+      "overriden_lines": 0
+    }
+  }
+}
