@@ -1,0 +1,31 @@
+ui/src/components/SyncTagTab.jsx
+  e0903177ce0b4130 71,77,79-90,92-107,109-110,112
+api/main.py
+  e0903177ce0b4130 69-75,79-80,118,126-131,443-681,800-801,803-805,812-813,815-823,828-843,845-851,853-858,860,863-868,870-872,874-878,881-884,886-889,891-894,908-909,911-913,921,923,929-930,932-951,953-972,975-989,1144-1148,1150,1157,1160-1161,1163-1166,1168,1170-1176,1178-1182,1185,1188-1203,1205-1220,1631-1635,1642,1645-1646,1648-1659,1661-1666,1668-1692
+ui/src/components/KaraokeTab.jsx
+  e0903177ce0b4130 50,59-62,64-65,67-72,74,77-89,91-92,94-95
+ui/src/components/StemSeparatorTab.jsx
+  e0903177ce0b4130 89,95,97-125,127-128,131
+ui/src/components/AudioAnalyzerTab.jsx
+  e0903177ce0b4130 43-44,47,49-64
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.1.4",
+  "base_commit_sha": "421bc427e5a6bc89a2e9ad97a21401df93b823f1",
+  "prompts": {
+    "e0903177ce0b4130": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "a149629a-5612-4e5e-b11c-063ce1a7c79a",
+        "model": "claude-sonnet-4-6"
+      },
+      "human_author": "Derek Wingard <derekwingard@gmail.com>",
+      "messages": [],
+      "total_additions": 668,
+      "total_deletions": 326,
+      "accepted_lines": 640,
+      "overriden_lines": 0
+    }
+  }
+}
