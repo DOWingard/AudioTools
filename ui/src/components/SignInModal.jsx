@@ -2,7 +2,7 @@ import { SignIn } from '@clerk/clerk-react';
 import { useAuthContext } from '../AuthContext.jsx';
 
 export default function SignInModal() {
-    const { signInOpen, closeSignIn } = useAuthContext();
+    const { signInOpen, signInReturnTo, closeSignIn } = useAuthContext();
 
     if (!signInOpen) return null;
 
@@ -11,8 +11,8 @@ export default function SignInModal() {
             <div className="modal-content" onClick={(e) => e.stopPropagation()}>
                 <button className="modal-close" onClick={closeSignIn} aria-label="Close">✕</button>
                 <SignIn
-                    routing="hash"
-                    fallbackRedirectUrl="/"
+                    routing="virtual"
+                    fallbackRedirectUrl={signInReturnTo || '/'}
                     appearance={{
                         variables: {
                             colorBackground: '#1f1f1f',

@@ -5,6 +5,7 @@ const AuthContext = createContext(null);
 
 export function AuthProvider({ children }) {
     const [signInOpen, setSignInOpen] = useState(false);
+    const [signInReturnTo, setSignInReturnTo] = useState('/');
     const [limitModalOpen, setLimitModalOpen] = useState(false);
     const [subModalOpen, setSubModalOpen] = useState(false);
     const [subModalPlan, setSubModalPlan] = useState(null);
@@ -12,7 +13,10 @@ export function AuthProvider({ children }) {
     // Cached file count for standard-tier quota pre-checks (null = not yet fetched)
     const [fileCount, setFileCount] = useState(null);
 
-    const openSignIn = useCallback(() => setSignInOpen(true), []);
+    const openSignIn = useCallback(() => {
+        setSignInReturnTo(window.location.pathname);
+        setSignInOpen(true);
+    }, []);
     const closeSignIn = useCallback(() => setSignInOpen(false), []);
     const openLimitModal = useCallback(() => setLimitModalOpen(true), []);
     const closeLimitModal = useCallback(() => setLimitModalOpen(false), []);
@@ -26,7 +30,7 @@ export function AuthProvider({ children }) {
 
     return (
         <AuthContext.Provider value={{
-            signInOpen, openSignIn, closeSignIn,
+            signInOpen, signInReturnTo, openSignIn, closeSignIn,
             limitModalOpen, openLimitModal, closeLimitModal,
             isProcessing, setIsProcessing,
             subModalOpen, setSubModalOpen, subModalPlan, setSubModalPlan, openSubModal,
