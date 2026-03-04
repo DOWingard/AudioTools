@@ -59,8 +59,13 @@ jobs:
           key: ${{ secrets.DEPLOY_SSH_KEY }}
           script: |
             set -e
-            cd /opt/audiotools
-            git pull origin unified-ui
+            if [ -d /opt/audiotools/.git ]; then
+              cd /opt/audiotools
+              git pull origin unified-ui
+            else
+              git clone git@github.com:DOWingard/AudioTools.git /opt/audiotools --recurse-submodules
+              cd /opt/audiotools
+            fi
             docker compose up --build -d --remove-orphans
             docker image prune -f
             echo "Deploy complete — stack is up"
