@@ -1,0 +1,23 @@
+docker-compose.yml
+  3a9e7d86861374e7 129-130
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.1.4",
+  "base_commit_sha": "a49bc95288570f01ae506631b40dcc021ea9eb5a",
+  "prompts": {
+    "3a9e7d86861374e7": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "a999c31d-dbdb-4ff0-b261-156157af9f20",
+        "model": "claude-sonnet-4-6"
+      },
+      "human_author": "Derek Wingard <derekwingard@gmail.com>",
+      "messages": [],
+      "total_additions": 2,
+      "total_deletions": 2,
+      "accepted_lines": 2,
+      "overriden_lines": 0
+    }
+  }
+}
