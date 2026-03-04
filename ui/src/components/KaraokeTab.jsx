@@ -47,7 +47,7 @@ export default function KaraokeTab() {
         setError('');
         setResultBlob(null);
         clearInterval(creepRef.current);
-        setProgress({ pct: 5, text: 'Validating audio format…' });
+        setProgress({ pct: 5, text: 'Uploading audio file…' });
 
         try {
             const form = new FormData();
@@ -56,28 +56,43 @@ export default function KaraokeTab() {
             const token = await getToken();
             const headers = token ? { Authorization: `Bearer ${token}` } : {};
 
-            setProgress({ pct: 12, text: 'Uploading audio file…' });
+            // Submit job — returns {job_id} immediately (202)
+            const resp = await fetch(`${API_BASE}/karaoke`, { method: 'POST', body: form, headers });
+            if (!resp.ok) throw new Error(`API ${resp.status}: ${await resp.text()}`);
+            const { job_id } = await resp.json();
 
-            let p = 12;
+            // Progress creep during server-side processing
+            let p = 14;
             creepRef.current = setInterval(() => {
-                p = Math.min(p + 0.35, 76);
-                const text = p < 22 ? 'Uploading audio file…'
-                    : p < 38 ? 'Analyzing audio channels…'
-                        : p < 52 ? 'Identifying source layers…'
-                            : p < 65 ? 'Separating audio sources…'
-                                : 'Reconstructing instrumental mix…';
+                p = Math.min(p + 0.3, 88);
+                const text = p < 24 ? 'Analyzing audio channels…'
+                    : p < 40 ? 'Identifying source layers…'
+                        : p < 58 ? 'Separating audio sources…'
+                            : p < 74 ? 'Reconstructing instrumental mix…'
+                                : 'Finalizing output…';
                 setProgress({ pct: p, text });
-                if (p >= 76) clearInterval(creepRef.current);
+                if (p >= 88) clearInterval(creepRef.current);
             }, 400);
 
-            const resp = await fetch(`${API_BASE}/karaoke`, { method: 'POST', body: form, headers });
+            // Poll until done
+            let resultResp;
+            while (true) {
+                await new Promise(r => setTimeout(r, 3000));
+                resultResp = await fetch(`${API_BASE}/karaoke/result/${job_id}`, { headers });
+                if (resultResp.status === 202) continue;
+                if (!resultResp.ok) {
+                    let errMsg = `API ${resultResp.status}`;
+                    try { const d = await resultResp.json(); errMsg = d.error || errMsg; } catch {}
+                    throw new Error(errMsg);
+                }
+                break;
+            }
+
             clearInterval(creepRef.current);
-            if (!resp.ok) throw new Error(`API ${resp.status}: ${await resp.text()}`);
+            setProgress({ pct: 92, text: 'Receiving output file…' });
+
             await consumeUsage();
-
-            setProgress({ pct: 82, text: 'Receiving output file…' });
-
-            const blob = await resp.blob();
+            const blob = await resultResp.blob();
             const name = `${file.name.replace(/\.\w+$/, '')}_karaoke.wav`;
             setResultBlob(blob);
             setResultName(name);

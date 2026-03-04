@@ -40,11 +40,28 @@ export default function AudioAnalyzerTab() {
 
             const token = await getToken();
             const headers = token ? { Authorization: `Bearer ${token}` } : {};
+
+            // Submit job — returns {job_id} immediately (202)
             const resp = await fetch(`${API_BASE}/analyze`, { method: 'POST', body: form, headers });
             if (!resp.ok) throw new Error(`API ${resp.status}: ${await resp.text()}`);
-            await consumeUsage();
+            const { job_id } = await resp.json();
 
-            const data = await resp.json();
+            // Poll until done
+            let resultResp;
+            while (true) {
+                await new Promise(r => setTimeout(r, 3000));
+                resultResp = await fetch(`${API_BASE}/analyze/result/${job_id}`, { headers });
+                if (resultResp.status === 202) continue;
+                if (!resultResp.ok) {
+                    let errMsg = `API ${resultResp.status}`;
+                    try { const d = await resultResp.json(); errMsg = d.error || errMsg; } catch {}
+                    throw new Error(errMsg);
+                }
+                break;
+            }
+
+            await consumeUsage();
+            const data = await resultResp.json();
             setResult(data);
             localStorage.setItem('lastProcessedAt', String(Date.now()));
             window.dispatchEvent(new CustomEvent('audioProcessed'));

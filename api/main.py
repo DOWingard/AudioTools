@@ -66,8 +66,18 @@ MAX_UPLOAD_BYTES = 250 * 1024 * 1024  # 250 MB
 STAGING_DIR = Path(os.environ.get("STAGING_DIR", "/var/lib/syntag/staging"))
 STAGING_DIR.mkdir(parents=True, exist_ok=True, mode=0o700)
 
+# Job results dir: async processing jobs (karaoke, separate) write output here
+_JOB_RESULTS_DIR = Path(os.environ.get("JOB_RESULTS_DIR", "/var/lib/syntag/jobs"))
+_JOB_RESULTS_DIR.mkdir(parents=True, exist_ok=True, mode=0o700)
+
+# In-memory job store: job_id -> {status, result_path, result_name, error, created_at}
+_job_store: dict = {}
+
 # Thread pool for CPU-heavy background embedding (separate from FastAPI async workers)
 _embed_pool = ThreadPoolExecutor(max_workers=2, thread_name_prefix="embed")
+
+# Thread pool for long-running audio processing jobs (karaoke, separate)
+_processing_pool = ThreadPoolExecutor(max_workers=2, thread_name_prefix="process")
 
 # Thread pool for O(n²) graph computation (keeps async event loop unblocked)
 _graph_pool = ThreadPoolExecutor(max_workers=1, thread_name_prefix="graph")
@@ -105,7 +115,7 @@ import time as _time  # noqa: E402
 
 @app.on_event("startup")
 async def _startup():
-    """Sweep staging dir for orphaned files older than 1 hour."""
+    """Sweep staging dir and job results dir for orphaned files older than 1 hour."""
     cutoff = _time.time() - 3600
     try:
         for f in STAGING_DIR.rglob("*"):
@@ -113,6 +123,12 @@ async def _startup():
                 f.unlink(missing_ok=True)
     except Exception as exc:
         log.warning("Startup staging cleanup failed: %s", exc)
+    try:
+        for d in _JOB_RESULTS_DIR.iterdir():
+            if d.is_dir() and d.stat().st_mtime < cutoff:
+                shutil.rmtree(d, ignore_errors=True)
+    except Exception as exc:
+        log.warning("Startup job results cleanup failed: %s", exc)
 
 
 # ---------------------------------------------------------------------------
@@ -424,6 +440,245 @@ def _stem_subgroup(stem_key: str) -> str:
     return "main"
 
 
+# ---------------------------------------------------------------------------
+# Background job workers — run in _processing_pool threads
+# ---------------------------------------------------------------------------
+
+def _run_karaoke_job(
+    job_id: str,
+    input_path: Path,
+    job_dir: Path,
+    user_id: Optional[str],
+    should_embed: bool,
+    original_filename: str,
+) -> None:
+    """Run Demucs separation and build instrumental mix. Runs in _processing_pool."""
+    job = _job_store[job_id]
+    job["status"] = "processing"
+    try:
+        import torch
+        import torchaudio
+        from src.separate import separate_stems
+
+        device = "cuda" if torch.cuda.is_available() else "cpu"
+        stems = separate_stems(input_path, job_dir / "stems", device=device)
+
+        instrumental = None
+        sr = None
+        for name, path in stems.items():
+            if name == "vocals":
+                continue
+            wav, s = torchaudio.load(str(path))
+            sr = s
+            instrumental = wav if instrumental is None else instrumental + wav
+
+        if instrumental is None:
+            raise RuntimeError("No stems produced by separation pipeline")
+
+        output_path = job_dir / f"{input_path.stem}_karaoke.wav"
+        torchaudio.save(str(output_path), instrumental, sr)
+
+        job["result_path"] = str(output_path)
+        job["result_name"] = output_path.name
+        job["status"] = "done"
+
+        # Fire-and-forget embedding via embed pool (non-blocking)
+        if should_embed and user_id:
+            try:
+                embed_job_id = str(_uuid.uuid4())
+                dest = _stage_file(user_id, "karaoke", embed_job_id, output_path.name, output_path)
+                _embed_pool.submit(
+                    _embed_and_store_sync,
+                    dest, user_id, "karaoke", "instrumental", original_filename, embed_job_id,
+                )
+            except Exception as e:
+                log.warning("[karaoke] Failed to stage for embedding (job %s): %s", job_id, e)
+    except Exception as exc:
+        log.exception("[karaoke] Job %s failed", job_id)
+        job["status"] = "error"
+        job["error"] = str(exc)
+    finally:
+        input_path.unlink(missing_ok=True)
+
+
+def _run_separate_job(
+    job_id: str,
+    input_path: Path,
+    job_dir: Path,
+    user_id: Optional[str],
+    remaining_slots: int,
+    original_filename: str,
+) -> None:
+    """Run full separation pipeline and build stems ZIP. Runs in _processing_pool."""
+    job = _job_store[job_id]
+    job["status"] = "processing"
+    try:
+        import torch
+        import zipfile as _zf
+        from src.advanced_separate import run_pipeline
+
+        device = "cuda" if torch.cuda.is_available() else "cpu"
+        output_dir = job_dir / "stems" / input_path.stem
+        all_files = run_pipeline(input_path, output_dir, device=device)
+
+        # Fire-and-forget embedding for each stem via embed pool
+        if remaining_slots > 0 and user_id:
+            embed_job_id = str(_uuid.uuid4())
+            stems_saved = 0
+            for stem_key, filepath in all_files.items():
+                if stems_saved >= remaining_slots:
+                    break
+                p = Path(filepath)
+                if p.exists():
+                    try:
+                        subgroup = _stem_subgroup(stem_key)
+                        dest = _stage_file(user_id, "separate", embed_job_id, f"{stem_key}.wav", p)
+                        _embed_pool.submit(
+                            _embed_and_store_sync,
+                            dest, user_id, "separate", subgroup, original_filename, embed_job_id,
+                        )
+                        stems_saved += 1
+                    except Exception as e:
+                        log.warning("[separate] Failed to stage stem %s for embedding: %s", stem_key, e)
+
+        # Build ZIP
+        zip_path = job_dir / f"{input_path.stem}_stems.zip"
+        with _zf.ZipFile(str(zip_path), "w", _zf.ZIP_DEFLATED) as zf:
+            for key, filepath in all_files.items():
+                p = Path(filepath)
+                if p.exists():
+                    zf.write(p, arcname=f"{key}.wav")
+
+        job["result_path"] = str(zip_path)
+        job["result_name"] = zip_path.name
+        job["status"] = "done"
+    except Exception as exc:
+        log.exception("[separate] Job %s failed", job_id)
+        job["status"] = "error"
+        job["error"] = str(exc)
+    finally:
+        input_path.unlink(missing_ok=True)
+
+
+def _run_tag_job(
+    job_id: str,
+    input_path: Path,
+    job_dir: Path,
+    user_id: Optional[str],
+    should_embed: bool,
+    original_filename: str,
+    overrides: dict,
+) -> None:
+    """Run full SyncTag pipeline and build result ZIP. Runs in _processing_pool."""
+    job = _job_store[job_id]
+    job["status"] = "processing"
+    try:
+        import zipfile as _zf
+        from src.export import write_csv_sidecar, write_tags_ffmpeg
+
+        tagger = _get_tagger()
+        result = tagger.run(input_path)
+
+        meta = result.setdefault("metadata", {})
+        if overrides.get("title"):
+            meta["Title"] = overrides["title"]
+        if overrides.get("artist"):
+            meta["Artist"] = overrides["artist"]
+        if overrides.get("album"):
+            meta["Album"] = overrides["album"]
+        if overrides.get("isrc"):
+            meta["ISRC"] = overrides["isrc"]
+        if overrides.get("genre"):
+            meta["Genre"] = overrides["genre"]
+        if overrides.get("bpm"):
+            try:
+                meta["BPM"] = int(float(overrides["bpm"]))
+            except ValueError:
+                pass
+
+        tagged_name = f"{input_path.stem}_tagged{input_path.suffix}"
+        tagged_path = job_dir / tagged_name
+        try:
+            write_tags_ffmpeg(input_path, tagged_path, result)
+        except Exception as exc:
+            log.warning("[tag] ffmpeg tag warning: %s — falling back to original", exc)
+            shutil.copy2(str(input_path), str(tagged_path))
+
+        csv_path = job_dir / f"{input_path.stem}.csv"
+        write_csv_sidecar(result, csv_path)
+
+        meta_path = job_dir / "metadata.json"
+        meta_path.write_text(json.dumps(result, indent=2, default=str))
+
+        zip_path = job_dir / f"{input_path.stem}_synctag.zip"
+        with _zf.ZipFile(str(zip_path), "w", _zf.ZIP_DEFLATED) as zf:
+            zf.write(meta_path, arcname="metadata.json")
+            zf.write(csv_path, arcname=csv_path.name)
+            zf.write(tagged_path, arcname=tagged_name)
+
+        job["result_path"] = str(zip_path)
+        job["result_name"] = zip_path.name
+        job["status"] = "done"
+
+        if should_embed and user_id:
+            try:
+                embed_job_id = str(_uuid.uuid4())
+                dest = _stage_file(user_id, "tag", embed_job_id, tagged_path.name, tagged_path)
+                _embed_pool.submit(
+                    _embed_and_store_sync,
+                    dest, user_id, "tag", "tagged", original_filename, embed_job_id,
+                )
+            except Exception as e:
+                log.warning("[tag] Failed to stage for embedding (job %s): %s", job_id, e)
+    except Exception as exc:
+        log.exception("[tag] Job %s failed", job_id)
+        job["status"] = "error"
+        job["error"] = str(exc)
+    finally:
+        input_path.unlink(missing_ok=True)
+
+
+def _run_analyze_job(
+    job_id: str,
+    input_path: Path,
+    job_dir: Path,
+    user_id: Optional[str],
+    should_embed: bool,
+    original_filename: str,
+) -> None:
+    """Run comprehensive audio analysis. Runs in _processing_pool."""
+    job = _job_store[job_id]
+    job["status"] = "processing"
+    try:
+        result = _analyze_audio(str(input_path))
+        job["result_json"] = result
+        job["status"] = "done"
+
+        if should_embed and user_id:
+            try:
+                embed_job_id = str(_uuid.uuid4())
+                dest = _stage_file(user_id, "analyze", embed_job_id, input_path.name, input_path)
+                extra = {
+                    k: result[k] for k in (
+                        "bpm", "key", "key_confidence", "key_source", "tempo_category",
+                        "energy_rating", "lufs", "rms_db", "peak_db", "brightness_hz",
+                        "sample_rate", "channels", "codec",
+                    ) if k in result
+                }
+                _embed_pool.submit(
+                    _embed_and_store_sync,
+                    dest, user_id, "analyze", "analyzed", original_filename, embed_job_id, extra,
+                )
+            except Exception as e:
+                log.warning("[analyze] Failed to stage for embedding (job %s): %s", job_id, e)
+    except Exception as exc:
+        log.exception("[analyze] Job %s failed", job_id)
+        job["status"] = "error"
+        job["error"] = str(exc)
+    finally:
+        shutil.rmtree(job_dir, ignore_errors=True)
+
+
 async def _save_upload(upload: UploadFile, dest: Path) -> None:
     """Stream an UploadFile to disk, raising HTTP 413 if it exceeds MAX_UPLOAD_BYTES."""
     total = 0
@@ -542,119 +797,102 @@ async def tag_audio(
     authorization: str = Header(default=None),
 ):
     """
-    Accept an audio upload, run the full SyncTag pipeline, and return a ZIP
-    containing:
-      - metadata.json
-      - <stem>.csv
-      - <stem>_tagged.<ext>
-    Optional form fields (title, artist, album, bpm, genre, isrc) override or
-    fill the corresponding pipeline-detected values before tagging.
-    When an Authorization token is provided, the tagged audio is also
-    persisted to user storage and embedded into Qdrant asynchronously.
+    Accept an audio upload, enqueue the SyncTag pipeline, and return a job ID
+    immediately (HTTP 202). Poll GET /api/tag/result/{job_id} for the result ZIP.
     """
-    tmp_dir = Path(tempfile.mkdtemp(prefix="api_tag_"))
-    try:
-        # Resolve user NOW — before heavy computation — so the Clerk JWT (60s TTL)
-        # doesn't expire during the SyncTag pipeline (which can take 100+ seconds).
-        user_id = None
-        if authorization:
-            token = authorization.removeprefix("Bearer ").strip()
-            user_id = await _resolve_user_id(token)
-
-        # Save upload — preserve the original filename (and therefore extension)
-        # so write_id3_tags dispatches to the correct mutagen handler.
-        # Fall back to content_type sniffing so we never call _tag_wav on an MP3.
-        _MIME_EXT = {
-            "audio/wav": ".wav", "audio/wave": ".wav", "audio/x-wav": ".wav",
-            "audio/flac": ".flac", "audio/x-flac": ".flac",
-            "audio/mpeg": ".mp3", "audio/mp3": ".mp3",
-            "audio/aac": ".aac", "audio/x-aac": ".aac",
-            "audio/ogg": ".ogg",
-        }
-        if audio.filename:
-            safe_name = Path(audio.filename).name or "input.wav"
-        else:
-            ext = _MIME_EXT.get((audio.content_type or "").lower(), ".wav")
-            safe_name = f"input{ext}"
-        input_path = tmp_dir / safe_name
-        await _save_upload(audio, input_path)
-        _validate_audio_magic(input_path)
-
-        # Run pipeline
-        tagger = _get_tagger()
-        result = tagger.run(input_path)
-
-        # Apply caller-supplied overrides into metadata (non-empty values win)
-        meta = result.setdefault("metadata", {})
-        if (v := (title or "").strip()):
-            meta["Title"] = v
-        if (v := (artist or "").strip()):
-            meta["Artist"] = v
-        if (v := (album or "").strip()):
-            meta["Album"] = v
-        if (v := (isrc or "").strip()):
-            meta["ISRC"] = v
-        if (v := (genre or "").strip()):
-            meta["Genre"] = v
-        if (v := (bpm or "").strip()):
-            try:
-                meta["BPM"] = int(float(v))
-            except ValueError:
-                pass
-
-        # Embed metadata into a tagged COPY via FFmpeg (-codec:a copy).
-        # Writing to a new file (not in-place) guarantees the original bytes
-        # are never at risk, and FFmpeg writes standard container metadata
-        # (RIFF LIST/INFO for WAV, ID3 for MP3, Vorbis for FLAC, etc.)
-        # so the result plays correctly in browsers and is visible in DAWs/OS.
-        from src.export import write_csv_sidecar, write_tags_ffmpeg
-        tagged_name = f"{input_path.stem}_tagged{input_path.suffix}"
-        tagged_path = tmp_dir / tagged_name
-        try:
-            write_tags_ffmpeg(input_path, tagged_path, result)
-        except Exception as exc:
-            log.warning("[api/tag] ffmpeg tag warning: %s — falling back to original", exc)
-            shutil.copy2(str(input_path), str(tagged_path))
-
-        # Write CSV sidecar
-        csv_path = tmp_dir / f"{input_path.stem}.csv"
-        write_csv_sidecar(result, csv_path)
-
-        # Write metadata JSON
-        meta_path = tmp_dir / "metadata.json"
-        meta_path.write_text(json.dumps(result, indent=2, default=str))
-
-        # Persist tagged audio + schedule embedding if authenticated and subscribed
+    # Resolve auth and quota BEFORE starting the job (JWT expires in 60s)
+    user_id = None
+    should_embed = False
+    if authorization:
+        token = authorization.removeprefix("Bearer ").strip()
+        user_id = await _resolve_user_id(token)
         if user_id:
             sub_type = await _get_subscription_type(token)
             if sub_type and sub_type != "free":
-                if await _check_user_quota(user_id, sub_type):
-                    job_id = str(_uuid.uuid4())
-                    dest = _stage_file(user_id, "tag", job_id, tagged_path.name, tagged_path)
-                    asyncio.create_task(
-                        _schedule_embed(dest, user_id, "tag", "tagged", tagged_path.name, job_id)
-                    )
+                should_embed = await _check_user_quota(user_id, sub_type)
 
-        # Pack into ZIP
-        buf = io.BytesIO()
-        with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
-            zf.write(meta_path, arcname="metadata.json")
-            zf.write(csv_path, arcname=csv_path.name)
-            zf.write(tagged_path, arcname=tagged_name)
-        buf.seek(0)
+    job_id = str(_uuid.uuid4())
+    job_dir = _JOB_RESULTS_DIR / job_id
+    job_dir.mkdir(parents=True)
 
-        filename = f"{input_path.stem}_synctag.zip"
-        return StreamingResponse(
-            buf,
-            media_type="application/zip",
-            headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    _MIME_EXT = {
+        "audio/wav": ".wav", "audio/wave": ".wav", "audio/x-wav": ".wav",
+        "audio/flac": ".flac", "audio/x-flac": ".flac",
+        "audio/mpeg": ".mp3", "audio/mp3": ".mp3",
+        "audio/aac": ".aac", "audio/x-aac": ".aac",
+        "audio/ogg": ".ogg",
+    }
+    if audio.filename:
+        safe_name = Path(audio.filename).name or "input.wav"
+    else:
+        ext = _MIME_EXT.get((audio.content_type or "").lower(), ".wav")
+        safe_name = f"input{ext}"
+
+    input_path = job_dir / safe_name
+    await _save_upload(audio, input_path)
+    _validate_audio_magic(input_path)
+
+    original_filename = safe_name
+    overrides = {
+        "title": (title or "").strip(),
+        "artist": (artist or "").strip(),
+        "album": (album or "").strip(),
+        "isrc": (isrc or "").strip(),
+        "bpm": (bpm or "").strip(),
+        "genre": (genre or "").strip(),
+    }
+
+    _job_store[job_id] = {
+        "status": "pending",
+        "result_path": None,
+        "result_name": None,
+        "error": None,
+        "created_at": _time.time(),
+    }
+
+    loop = asyncio.get_running_loop()
+    loop.run_in_executor(
+        _processing_pool,
+        _run_tag_job,
+        job_id, input_path, job_dir, user_id, should_embed, original_filename, overrides,
+    )
+
+    return JSONResponse({"job_id": job_id}, status_code=202)
+
+
+@app.get("/api/tag/result/{job_id}")
+async def tag_result(job_id: str):
+    """Poll for a tag job result. Returns 202 while pending, 200 + ZIP when done."""
+    job = _job_store.get(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found or already downloaded")
+
+    status = job["status"]
+    if status in ("pending", "processing"):
+        return JSONResponse({"status": status}, status_code=202)
+
+    if status == "error":
+        del _job_store[job_id]
+        return JSONResponse(
+            {"status": "error", "error": job.get("error", "Processing failed")},
+            status_code=500,
         )
 
-    except Exception as exc:
-        log.exception("Unhandled error in /api/tag")
-        raise HTTPException(status_code=500, detail="Internal server error") from exc
-    finally:
-        shutil.rmtree(tmp_dir, ignore_errors=True)
+    result_path = Path(job["result_path"])
+    if not result_path.exists():
+        del _job_store[job_id]
+        raise HTTPException(status_code=500, detail="Result file missing")
+
+    result_name = job["result_name"]
+    buf = io.BytesIO(result_path.read_bytes())
+    del _job_store[job_id]
+    shutil.rmtree(result_path.parent, ignore_errors=True)
+
+    return StreamingResponse(
+        buf,
+        media_type="application/zip",
+        headers={"Content-Disposition": f'attachment; filename="{result_name}"'},
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -667,82 +905,89 @@ async def separate_audio(
     authorization: str = Header(default=None),
 ):
     """
-    Accept an audio upload, run the three-stage separation pipeline, and
-    return a ZIP containing all stem WAV files keyed by stem name.
-    Output stems are persisted and embedded into Qdrant asynchronously when
-    an Authorization token is provided.
+    Accept an audio upload, enqueue the separation pipeline, and return a job ID
+    immediately (HTTP 202). Poll GET /api/separate/result/{job_id} for the result.
     """
-    tmp_dir = Path(tempfile.mkdtemp(prefix="api_sep_"))
-    try:
-        import torch
-
-        # Resolve user NOW — before heavy computation — so the Clerk JWT (60s TTL)
-        # doesn't expire during Demucs + LARS pipeline (which takes 60-180+ seconds).
-        user_id = None
-        if authorization:
-            token = authorization.removeprefix("Bearer ").strip()
-            user_id = await _resolve_user_id(token)
-
-        # Save upload
-        _safe_name = Path(audio.filename or "input.wav").name or "input.wav"
-        input_path = tmp_dir / _safe_name
-        await _save_upload(audio, input_path)
-        _validate_audio_magic(input_path)
-
-        output_dir = tmp_dir / "stems" / input_path.stem
-        device = "cuda" if torch.cuda.is_available() else "cpu"
-
-        from src.advanced_separate import run_pipeline
-        all_files = run_pipeline(input_path, output_dir, device=device)
-
-        # Persist + schedule embedding if authenticated and subscribed
+    # Resolve auth and quota BEFORE starting the job (JWT expires in 60s)
+    user_id = None
+    remaining_slots = 0
+    if authorization:
+        token = authorization.removeprefix("Bearer ").strip()
+        user_id = await _resolve_user_id(token)
         if user_id:
             sub_type = await _get_subscription_type(token)
             if sub_type and sub_type != "free":
                 current_count = await _get_user_file_count(user_id)
+                # premium = unlimited (use a large cap); standard = remaining quota
                 remaining_slots = (
-                    len(all_files)  # unlimited for premium
+                    999
                     if sub_type == "premium"
                     else max(0, MAX_FILES_STANDARD - current_count)
                 )
-                job_id = str(_uuid.uuid4())
-                stems_saved = 0
-                for stem_key, filepath in all_files.items():
-                    if stems_saved >= remaining_slots:
-                        break
-                    p = Path(filepath)
-                    if p.exists():
-                        subgroup = _stem_subgroup(stem_key)
-                        dest = _stage_file(user_id, "separate", job_id, f"{stem_key}.wav", p)
-                        asyncio.create_task(
-                            _schedule_embed(
-                                dest, user_id, "separate", subgroup,
-                                Path(audio.filename or "input.wav").name or "input.wav", job_id,
-                            )
-                        )
-                        stems_saved += 1
 
-        # Pack all existing stem files into ZIP
-        buf = io.BytesIO()
-        with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
-            for key, filepath in all_files.items():
-                p = Path(filepath)
-                if p.exists():
-                    zf.write(p, arcname=f"{key}.wav")
-        buf.seek(0)
+    job_id = str(_uuid.uuid4())
+    job_dir = _JOB_RESULTS_DIR / job_id
+    job_dir.mkdir(parents=True)
 
-        filename = f"{input_path.stem}_stems.zip"
-        return StreamingResponse(
-            buf,
-            media_type="application/zip",
-            headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    _safe_name = Path(audio.filename or "input.wav").name or "input.wav"
+    input_path = job_dir / _safe_name
+    await _save_upload(audio, input_path)
+    _validate_audio_magic(input_path)
+
+    original_filename = Path(audio.filename or "input.wav").name or "input.wav"
+
+    _job_store[job_id] = {
+        "status": "pending",
+        "result_path": None,
+        "result_name": None,
+        "error": None,
+        "created_at": _time.time(),
+    }
+
+    loop = asyncio.get_running_loop()
+    loop.run_in_executor(
+        _processing_pool,
+        _run_separate_job,
+        job_id, input_path, job_dir, user_id, remaining_slots, original_filename,
+    )
+
+    return JSONResponse({"job_id": job_id}, status_code=202)
+
+
+@app.get("/api/separate/result/{job_id}")
+async def separate_result(job_id: str):
+    """Poll for a separation job result. Returns 202 while pending, 200 + ZIP when done."""
+    job = _job_store.get(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found or already downloaded")
+
+    status = job["status"]
+    if status in ("pending", "processing"):
+        return JSONResponse({"status": status}, status_code=202)
+
+    if status == "error":
+        del _job_store[job_id]
+        return JSONResponse(
+            {"status": "error", "error": job.get("error", "Processing failed")},
+            status_code=500,
         )
 
-    except Exception as exc:
-        log.exception("Unhandled error in /api/separate")
-        raise HTTPException(status_code=500, detail="Internal server error") from exc
-    finally:
-        shutil.rmtree(tmp_dir, ignore_errors=True)
+    # status == "done"
+    result_path = Path(job["result_path"])
+    if not result_path.exists():
+        del _job_store[job_id]
+        raise HTTPException(status_code=500, detail="Result file missing")
+
+    result_name = job["result_name"]
+    buf = io.BytesIO(result_path.read_bytes())
+    del _job_store[job_id]
+    shutil.rmtree(result_path.parent, ignore_errors=True)
+
+    return StreamingResponse(
+        buf,
+        media_type="application/zip",
+        headers={"Content-Disposition": f'attachment; filename="{result_name}"'},
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -896,65 +1141,84 @@ async def karaoke_audio(
     audio: UploadFile = File(...),
     authorization: str = Header(default=None),
 ):
-    """Remove vocals using Demucs and return the instrumental mix."""
-    tmp_dir = Path(tempfile.mkdtemp(prefix="api_karaoke_"))
-    try:
-        import torch
-
-        # Resolve user NOW — before Demucs (60-180s) — so the Clerk JWT (60s TTL) is fresh.
-        user_id = None
-        if authorization:
-            token = authorization.removeprefix("Bearer ").strip()
-            user_id = await _resolve_user_id(token)
-        _safe_name = Path(audio.filename or "input.wav").name or "input.wav"
-        input_path = tmp_dir / _safe_name
-        await _save_upload(audio, input_path)
-        _validate_audio_magic(input_path)
-
-        device = "cuda" if torch.cuda.is_available() else "cpu"
-
-        from src.separate import separate_stems
-        stems = separate_stems(input_path, tmp_dir / "stems", device=device)
-
-        # Build instrumental by summing all non-vocal stems
-        import torchaudio
-        instrumental = None
-        sr = None
-        for name, path in stems.items():
-            if name == "vocals":
-                continue
-            wav, s = torchaudio.load(str(path))
-            sr = s
-            instrumental = wav if instrumental is None else instrumental + wav
-
-        if instrumental is None:
-            raise HTTPException(status_code=500, detail="No stems produced")
-
-        output_path = tmp_dir / f"{input_path.stem}_karaoke.wav"
-        torchaudio.save(str(output_path), instrumental, sr)
-
-        # Persist + schedule embedding if authenticated and subscribed
+    """
+    Accept an audio upload, enqueue vocal removal, and return a job ID immediately
+    (HTTP 202). Poll GET /api/karaoke/result/{job_id} for the result.
+    """
+    # Resolve auth and quota BEFORE starting the job (JWT expires in 60s)
+    user_id = None
+    should_embed = False
+    if authorization:
+        token = authorization.removeprefix("Bearer ").strip()
+        user_id = await _resolve_user_id(token)
         if user_id:
             sub_type = await _get_subscription_type(token)
             if sub_type and sub_type != "free":
-                if await _check_user_quota(user_id, sub_type):
-                    job_id = str(_uuid.uuid4())
-                    dest = _stage_file(user_id, "karaoke", job_id, output_path.name, output_path)
-                    asyncio.create_task(
-                        _schedule_embed(dest, user_id, "karaoke", "instrumental", Path(audio.filename or "input.wav").name or "input.wav", job_id)
-                    )
+                should_embed = await _check_user_quota(user_id, sub_type)
 
-        buf = io.BytesIO(output_path.read_bytes())
-        return StreamingResponse(
-            buf,
-            media_type="audio/wav",
-            headers={"Content-Disposition": f'attachment; filename="{output_path.name}"'},
+    job_id = str(_uuid.uuid4())
+    job_dir = _JOB_RESULTS_DIR / job_id
+    job_dir.mkdir(parents=True)
+
+    _safe_name = Path(audio.filename or "input.wav").name or "input.wav"
+    input_path = job_dir / _safe_name
+    await _save_upload(audio, input_path)
+    _validate_audio_magic(input_path)
+
+    original_filename = Path(audio.filename or "input.wav").name or "input.wav"
+
+    _job_store[job_id] = {
+        "status": "pending",
+        "result_path": None,
+        "result_name": None,
+        "error": None,
+        "created_at": _time.time(),
+    }
+
+    loop = asyncio.get_running_loop()
+    loop.run_in_executor(
+        _processing_pool,
+        _run_karaoke_job,
+        job_id, input_path, job_dir, user_id, should_embed, original_filename,
+    )
+
+    return JSONResponse({"job_id": job_id}, status_code=202)
+
+
+@app.get("/api/karaoke/result/{job_id}")
+async def karaoke_result(job_id: str):
+    """Poll for a karaoke job result. Returns 202 while pending, 200 + WAV when done."""
+    job = _job_store.get(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found or already downloaded")
+
+    status = job["status"]
+    if status in ("pending", "processing"):
+        return JSONResponse({"status": status}, status_code=202)
+
+    if status == "error":
+        del _job_store[job_id]
+        return JSONResponse(
+            {"status": "error", "error": job.get("error", "Processing failed")},
+            status_code=500,
         )
-    except Exception as exc:
-        log.exception("Unhandled error in /api/karaoke")
-        raise HTTPException(status_code=500, detail="Internal server error") from exc
-    finally:
-        shutil.rmtree(tmp_dir, ignore_errors=True)
+
+    # status == "done"
+    result_path = Path(job["result_path"])
+    if not result_path.exists():
+        del _job_store[job_id]
+        raise HTTPException(status_code=500, detail="Result file missing")
+
+    result_name = job["result_name"]
+    buf = io.BytesIO(result_path.read_bytes())
+    del _job_store[job_id]
+    shutil.rmtree(result_path.parent, ignore_errors=True)
+
+    return StreamingResponse(
+        buf,
+        media_type="audio/wav",
+        headers={"Content-Disposition": f'attachment; filename="{result_name}"'},
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -1363,52 +1627,69 @@ async def analyze_audio(
     audio: UploadFile = File(...),
     authorization: str = Header(default=None),
 ):
-    """Comprehensive audio analysis returning BPM, key, loudness, spectral info.
-    When an Authorization token is provided, the original audio file is persisted
-    and embedded into Qdrant with the analysis results stored in the payload.
     """
-    tmp_dir = Path(tempfile.mkdtemp(prefix="api_analyze_"))
-    try:
-        user_id = None
-        if authorization:
-            token = authorization.removeprefix("Bearer ").strip()
-            user_id = await _resolve_user_id(token)
-
-        _safe_name = Path(audio.filename or "input.wav").name or "input.wav"
-        input_path = tmp_dir / _safe_name
-        await _save_upload(audio, input_path)
-        _validate_audio_magic(input_path)
-
-        result = _analyze_audio(str(input_path))
-
-        # Persist original + schedule embedding if authenticated and subscribed
+    Accept an audio upload, enqueue comprehensive analysis, and return a job ID
+    immediately (HTTP 202). Poll GET /api/analyze/result/{job_id} for the JSON result.
+    """
+    user_id = None
+    should_embed = False
+    if authorization:
+        token = authorization.removeprefix("Bearer ").strip()
+        user_id = await _resolve_user_id(token)
         if user_id:
             sub_type = await _get_subscription_type(token)
             if sub_type and sub_type != "free":
-                await _check_user_quota(user_id, sub_type)
-                job_id = str(_uuid.uuid4())
-                dest = _stage_file(user_id, "analyze", job_id, input_path.name, input_path)
-                extra = {
-                    k: result[k] for k in (
-                        "bpm", "key", "key_confidence", "key_source", "tempo_category",
-                        "energy_rating", "lufs", "rms_db", "peak_db", "brightness_hz",
-                        "sample_rate", "channels", "codec",
-                    ) if k in result
-                }
-                asyncio.create_task(
-                    _schedule_embed(
-                        dest, user_id, "analyze", "analyzed",
-                        Path(audio.filename or "input.wav").name or "input.wav", job_id, extra,
-                    )
-                )
+                should_embed = await _check_user_quota(user_id, sub_type)
 
-        return JSONResponse(result)
+    job_id = str(_uuid.uuid4())
+    job_dir = _JOB_RESULTS_DIR / job_id
+    job_dir.mkdir(parents=True)
 
-    except Exception as exc:
-        log.exception("Unhandled error in /api/analyze")
-        raise HTTPException(status_code=500, detail="Internal server error") from exc
-    finally:
-        shutil.rmtree(tmp_dir, ignore_errors=True)
+    _safe_name = Path(audio.filename or "input.wav").name or "input.wav"
+    input_path = job_dir / _safe_name
+    await _save_upload(audio, input_path)
+    _validate_audio_magic(input_path)
+
+    original_filename = _safe_name
+
+    _job_store[job_id] = {
+        "status": "pending",
+        "result_json": None,
+        "error": None,
+        "created_at": _time.time(),
+    }
+
+    loop = asyncio.get_running_loop()
+    loop.run_in_executor(
+        _processing_pool,
+        _run_analyze_job,
+        job_id, input_path, job_dir, user_id, should_embed, original_filename,
+    )
+
+    return JSONResponse({"job_id": job_id}, status_code=202)
+
+
+@app.get("/api/analyze/result/{job_id}")
+async def analyze_result(job_id: str):
+    """Poll for an analyze job result. Returns 202 while pending, 200 + JSON when done."""
+    job = _job_store.get(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found or already retrieved")
+
+    status = job["status"]
+    if status in ("pending", "processing"):
+        return JSONResponse({"status": status}, status_code=202)
+
+    if status == "error":
+        del _job_store[job_id]
+        return JSONResponse(
+            {"status": "error", "error": job.get("error", "Processing failed")},
+            status_code=500,
+        )
+
+    result = job.get("result_json")
+    del _job_store[job_id]
+    return JSONResponse(result)
 
 
 # ---------------------------------------------------------------------------

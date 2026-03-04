@@ -86,34 +86,49 @@ export default function StemSeparatorTab() {
             const token = await getToken();
             const headers = token ? { Authorization: `Bearer ${token}` } : {};
 
-            let p = 5;
-            creepRef.current = setInterval(() => {
-                p = Math.min(p + 0.3, 78);
-                const text = p < 15 ? 'Uploading audio file…'
-                    : p < 28 ? 'Analyzing track structure…'
-                        : p < 45 ? 'Separating main stems…'
-                            : p < 62 ? 'Processing drum components…'
-                                : p < 72 ? 'Generating one-shots…'
-                                    : 'Packaging results…';
-                setProgress({ pct: p, text });
-                if (p >= 78) clearInterval(creepRef.current);
-            }, 450);
-
+            // Submit job — returns {job_id} immediately (202)
             const resp = await fetch(`${API_BASE}/separate`, { method: 'POST', body: form, headers });
-            clearInterval(creepRef.current);
-
             if (!resp.ok) {
                 const text = await resp.text();
                 throw new Error(`API ${resp.status}: ${text}`);
             }
+            const { job_id } = await resp.json();
+
+            // Progress creep during server-side processing
+            let p = 8;
+            creepRef.current = setInterval(() => {
+                p = Math.min(p + 0.25, 88);
+                const text = p < 18 ? 'Analyzing track structure…'
+                    : p < 35 ? 'Separating main stems…'
+                        : p < 55 ? 'Processing drum components…'
+                            : p < 72 ? 'Generating one-shots…'
+                                : 'Packaging results…';
+                setProgress({ pct: p, text });
+                if (p >= 88) clearInterval(creepRef.current);
+            }, 450);
+
+            // Poll until done
+            let resultResp;
+            while (true) {
+                await new Promise(r => setTimeout(r, 3000));
+                resultResp = await fetch(`${API_BASE}/separate/result/${job_id}`, { headers });
+                if (resultResp.status === 202) continue;
+                if (!resultResp.ok) {
+                    let errMsg = `API ${resultResp.status}`;
+                    try { const d = await resultResp.json(); errMsg = d.error || errMsg; } catch {}
+                    throw new Error(errMsg);
+                }
+                break;
+            }
+
+            clearInterval(creepRef.current);
             await consumeUsage();
 
-            setProgress({ pct: 82, text: 'Receiving stem bundle…' });
-
-            const rawZip = await resp.arrayBuffer();
+            setProgress({ pct: 90, text: 'Receiving stem bundle…' });
+            const rawZip = await resultResp.arrayBuffer();
             setZipBlob(new Blob([rawZip], { type: 'application/zip' }));
 
-            setProgress({ pct: 90, text: 'Extracting audio files…' });
+            setProgress({ pct: 95, text: 'Extracting audio files…' });
 
             const zip = await JSZip.loadAsync(rawZip);
             const extracted = {};

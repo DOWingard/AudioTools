@@ -68,34 +68,48 @@ export default function SyncTagTab() {
             const token = await getToken();
             const headers = token ? { Authorization: `Bearer ${token}` } : {};
 
-            let p = 5;
-            creepRef.current = setInterval(() => {
-                p = Math.min(p + 0.28, 76);
-                const text = p < 18 ? 'Uploading audio file…'
-                    : p < 32 ? 'Analyzing audio characteristics…'
-                        : p < 47 ? 'Identifying musical elements…'
-                            : p < 60 ? 'Classifying genre, mood, and tempo…'
-                                : p < 72 ? 'Generating sync licensing metadata…'
-                                    : 'Writing metadata tags…';
-                setProgress({ pct: p, text });
-                if (p >= 76) clearInterval(creepRef.current);
-            }, 500);
-
+            // Submit job — returns {job_id} immediately (202)
             const resp = await fetch(`${API_BASE}/tag`, { method: 'POST', body: form, headers });
-            clearInterval(creepRef.current);
-
             if (!resp.ok) {
                 const text = await resp.text();
                 throw new Error(`API ${resp.status}: ${text}`);
             }
+            const { job_id } = await resp.json();
+
+            // Progress creep during server-side processing
+            let p = 8;
+            creepRef.current = setInterval(() => {
+                p = Math.min(p + 0.22, 88);
+                const text = p < 18 ? 'Analyzing audio characteristics…'
+                    : p < 34 ? 'Identifying musical elements…'
+                        : p < 52 ? 'Classifying genre, mood, and tempo…'
+                            : p < 68 ? 'Generating sync licensing metadata…'
+                                : 'Writing metadata tags…';
+                setProgress({ pct: p, text });
+                if (p >= 88) clearInterval(creepRef.current);
+            }, 500);
+
+            // Poll until done
+            let resultResp;
+            while (true) {
+                await new Promise(r => setTimeout(r, 3000));
+                resultResp = await fetch(`${API_BASE}/tag/result/${job_id}`, { headers });
+                if (resultResp.status === 202) continue;
+                if (!resultResp.ok) {
+                    let errMsg = `API ${resultResp.status}`;
+                    try { const d = await resultResp.json(); errMsg = d.error || errMsg; } catch {}
+                    throw new Error(errMsg);
+                }
+                break;
+            }
+
+            clearInterval(creepRef.current);
             await consumeUsage();
 
-            setProgress({ pct: 80, text: 'Receiving tagged files…' });
+            setProgress({ pct: 90, text: 'Receiving tagged files…' });
+            const rawZip = await resultResp.arrayBuffer();
 
-            const rawZip = await resp.arrayBuffer();
-
-            setProgress({ pct: 88, text: 'Parsing metadata…' });
-
+            setProgress({ pct: 95, text: 'Parsing metadata…' });
             const zip = await JSZip.loadAsync(rawZip);
 
             // metadata.json
