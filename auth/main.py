@@ -56,13 +56,28 @@ JWKS_TTL = 3600  # 1 hour
 
 
 async def _refresh_jwks() -> dict:
-    """Fetch Clerk JWKS via async httpx and update the in-process cache."""
+    """Fetch Clerk JWKS via async httpx and update the in-process cache.
+
+    Resolution order:
+      1. CLERK_JWKS_URL env var (explicit override)
+      2. Clerk Backend API (api.clerk.com) using CLERK_SECRET_KEY — preferred
+         server-side path; no VITE_ variable required.
+      3. Frontend API derived from VITE_CLERK_PUBLISHABLE_KEY (legacy fallback)
+    """
     global _jwks_cache, _jwks_fetched_at
-    # CLERK_JWKS_URL overrides auto-derivation — useful when the Clerk FAPI domain
-    # is unreachable from the server (e.g. dev-instance DNS not resolving).
-    url = os.environ.get("CLERK_JWKS_URL") or f"{_clerk_fapi_url()}/.well-known/jwks.json"
+
+    direct = os.environ.get("CLERK_JWKS_URL", "")
+    headers: dict = {}
+    if direct:
+        url = direct
+    elif CLERK_SECRET_KEY:
+        url = "https://api.clerk.com/v1/jwks"
+        headers = {"Authorization": f"Bearer {CLERK_SECRET_KEY}"}
+    else:
+        url = f"{_clerk_fapi_url()}/.well-known/jwks.json"
+
     async with httpx.AsyncClient() as client:
-        resp = await client.get(url, timeout=10)
+        resp = await client.get(url, headers=headers, timeout=10)
         resp.raise_for_status()
     _jwks_cache = resp.json()
     _jwks_fetched_at = time.monotonic()
