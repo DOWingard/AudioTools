@@ -15,14 +15,18 @@ export default function SignInModal() {
                     fallbackRedirectUrl="/"
                     appearance={{
                         variables: {
-                            colorBackground: '#ffffff',
-                            colorText: '#1A1A1A',
-                            colorInputText: '#1A1A1A',
-                            colorInputBackground: '#ffffff',
+                            colorBackground: '#1f1f1f',
+                            colorText: '#ebebeb',
+                            colorTextSecondary: '#888888',
+                            colorInputText: '#ebebeb',
+                            colorInputBackground: '#2e2e2e',
+                            colorPrimary: '#D50C2D',
+                            colorNeutral: '#ebebeb',
                         },
                         elements: {
                             rootBox: { width: '100%' },
                             card: { boxShadow: 'none', border: 'none', background: 'transparent' },
+                            input: { border: '1px solid #2e2e2e' },
                         },
                     }}
                 />
