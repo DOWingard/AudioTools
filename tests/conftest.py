@@ -1,26 +1,26 @@
 import math
-
-import numpy as np
 import pytest
-import torch
 from unittest.mock import MagicMock
 
 
 @pytest.fixture
-def dummy_waveform_short() -> np.ndarray:
+def dummy_waveform_short():
     """0.5 s @ 16 kHz"""
+    import numpy as np
     return np.zeros(8000, dtype=np.float32)
 
 
 @pytest.fixture
-def dummy_waveform_long() -> np.ndarray:
+def dummy_waveform_long():
     """20 s @ 16 kHz"""
+    import numpy as np
     return np.zeros(320000, dtype=np.float32)
 
 
 @pytest.fixture
-def dummy_embedding() -> np.ndarray:
+def dummy_embedding():
     """Unit-norm 768-d embedding."""
+    import numpy as np
     rng = np.random.default_rng(42)
     vec = rng.standard_normal(768).astype(np.float32)
     return vec / np.linalg.norm(vec)
@@ -28,6 +28,8 @@ def dummy_embedding() -> np.ndarray:
 
 @pytest.fixture
 def mock_m2d_model() -> MagicMock:
+    import numpy as np
+    import torch
     unit_vec = np.ones(768, dtype=np.float32) / math.sqrt(768)
     # encode_clap_audio returns (1, 768) tensor
     fake_tensor = torch.from_numpy(unit_vec).unsqueeze(0)
