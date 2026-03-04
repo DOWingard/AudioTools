@@ -1,0 +1,23 @@
+.github/workflows/deploy.yml
+  3a9e7d86861374e7 70-80
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.1.4",
+  "base_commit_sha": "f42dc3fbbed6678308d0e258d24bb7bc2664fea2",
+  "prompts": {
+    "3a9e7d86861374e7": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "a999c31d-dbdb-4ff0-b261-156157af9f20",
+        "model": "claude-sonnet-4-6"
+      },
+      "human_author": "Derek Wingard <derekwingard@gmail.com>",
+      "messages": [],
+      "total_additions": 11,
+      "total_deletions": 0,
+      "accepted_lines": 11,
+      "overriden_lines": 0
+    }
+  }
+}
