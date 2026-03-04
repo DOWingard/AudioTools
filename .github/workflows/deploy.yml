@@ -67,6 +67,17 @@ jobs:
             fi
             cd /opt/audiotools
             git pull origin unified-ui
+
+            # If postgres is running with stale credentials, wipe the volume so it
+            # reinitialises with the current .env values on the next compose up.
+            PG_USER=$(grep '^POSTGRES_USER=' .env | cut -d= -f2 | tr -d '[:space:]')
+            PG_USER=${PG_USER:-audiotility}
+            if ! docker compose exec -T postgres psql -U "$PG_USER" -c '\q' "$PG_USER" 2>/dev/null; then
+              echo "Postgres credential mismatch or not running — reinitialising data volume"
+              docker compose rm -sf postgres 2>/dev/null || true
+              docker volume rm audiotools_postgres_data 2>/dev/null || true
+            fi
+
             docker compose up --build -d --remove-orphans
             docker image prune -f
             echo "Deploy complete — stack is up"
