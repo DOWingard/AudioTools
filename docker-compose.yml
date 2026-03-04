@@ -138,7 +138,7 @@ services:
         VITE_STRIPE_PUBLISHABLE_KEY: ${VITE_STRIPE_PUBLISHABLE_KEY}
     container_name: syntag_ui
     ports:
-      - "7860:7860"
+      - "80:7860"
     environment:
       - COMPUTE_API_URL=http://compute:8000
     depends_on:

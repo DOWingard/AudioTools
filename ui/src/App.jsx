@@ -196,7 +196,7 @@ function AppLayout() {
                 <aside className="sidebar">
                     <div className="sidebar-header">
                         <span className="brand-text" style={{ fontWeight: 800, color: 'var(--accent)', fontSize: '1.25rem' }}>
-                            SyncTag AI
+                            Audiotility
                         </span>
                     </div>
                     <nav className="sidebar-nav">
@@ -219,13 +219,13 @@ function AppLayout() {
                         <div className="top-bar-inner">
                             <div className="brand-logo-mobile" style={{ display: 'none' }}>
                                 <span style={{ fontWeight: 800, color: 'var(--accent)', fontSize: '1.25rem' }}>
-                                    SyncTag AI
+                                    Audiotility
                                 </span>
                             </div>
 
                             <div className="top-bar-right" style={{ marginLeft: 'auto' }}>
                                 <a
-                                    href="mailto:support@email.com"
+                                    href="mailto:support@audiotility.com"
                                     className="auth-btn support-btn"
                                     style={{
                                         textDecoration: 'none',

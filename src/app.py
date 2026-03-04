@@ -222,13 +222,13 @@ def separate_audio(audio_file: str, progress=gr.Progress()):
 # Gradio UI
 # =========================================================================== #
 
-with gr.Blocks(title="Audio Pipeline") as demo:
-    gr.Markdown("# 🎛️ Audio Pipeline", elem_classes=["main-title"])
-    gr.Markdown("SyncTag AI  •  Stem Separator", elem_classes=["subtitle"])
+with gr.Blocks(title="Audiotility") as demo:
+    gr.Markdown("# 🎛️ Audiotility", elem_classes=["main-title"])
+    gr.Markdown("Audiotility  •  Stem Separator", elem_classes=["subtitle"])
 
     with gr.Tabs():
         # ── Tab 1: SyncTag AI ─────────────────────────────────────────── #
-        with gr.Tab("🏷️ SyncTag AI", id="synctag"):
+        with gr.Tab("🏷️ Audiotility", id="synctag"):
             gr.Markdown("Upload audio to auto-tag for sync licensing. Get a tagged copy, CSV sidecar, and metadata summary.")
 
             with gr.Row():
