@@ -14,6 +14,12 @@ export default function SignInModal() {
                     routing="hash"
                     fallbackRedirectUrl="/"
                     appearance={{
+                        variables: {
+                            colorBackground: '#ffffff',
+                            colorText: '#1A1A1A',
+                            colorInputText: '#1A1A1A',
+                            colorInputBackground: '#ffffff',
+                        },
                         elements: {
                             rootBox: { width: '100%' },
                             card: { boxShadow: 'none', border: 'none', background: 'transparent' },
