@@ -1,0 +1,23 @@
+ui/src/components/MyFilesTab.jsx
+  3a9e7d86861374e7 757-758
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.1.4",
+  "base_commit_sha": "60dc7ad48c720ebd3fba32f8b13b13c90237787c",
+  "prompts": {
+    "3a9e7d86861374e7": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "a999c31d-dbdb-4ff0-b261-156157af9f20",
+        "model": "claude-sonnet-4-6"
+      },
+      "human_author": "Derek Wingard <derekwingard@gmail.com>",
+      "messages": [],
+      "total_additions": 2,
+      "total_deletions": 3,
+      "accepted_lines": 2,
+      "overriden_lines": 0
+    }
+  }
+}
