@@ -754,10 +754,9 @@ function UpgradeWall({ onSelectPlan }) {
     return (
         <div className="fade-in">
             <div className="card" style={{ textAlign: 'center', padding: '2.5rem 2rem 2rem' }}>
-                <div style={{ fontSize: '3rem', marginBottom: '1rem' }}>Subscription Required</div>
-                <h2 style={{ marginBottom: '0.5rem' }}>My Files requires a subscription</h2>
+                <div style={{ fontSize: '3rem', marginBottom: '1rem' }}>🎵</div>
+                <h2 style={{ marginBottom: '0.5rem' }}>Every file you process is automatically saved to your personal library</h2>
                 <p style={{ color: 'var(--text-secondary)', maxWidth: 480, margin: '0 auto 2rem', fontSize: '0.95rem' }}>
-                    Every file you process is automatically saved to your personal library.
                     Upgrade to unlock access to your library and AI-powered similarity search.
                 </p>
 
