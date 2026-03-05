@@ -1,5 +1,6 @@
 import { useState, useCallback, useRef } from 'react';
 import { useAuth } from '@clerk/clerk-react';
+import { useAuthContext } from '../AuthContext.jsx';
 import { loadStripe } from '@stripe/stripe-js';
 import { EmbeddedCheckoutProvider, EmbeddedCheckout } from '@stripe/react-stripe-js';
 
@@ -24,6 +25,7 @@ const PLANS = [
 
 export default function SubscriptionModal({ open, onClose, initialPlan = null }) {
     const { getToken } = useAuth();
+    const { profile } = useAuthContext();
     const [selectedPlan, setSelectedPlan] = useState(initialPlan);
 
     // Sync selectedPlan when modal opens or initialPlan changes
@@ -97,18 +99,41 @@ export default function SubscriptionModal({ open, onClose, initialPlan = null })
                                     <ul style={{ paddingLeft: '1.2rem', margin: '0 0 1.5rem', color: 'var(--text-secondary)' }}>
                                         {plan.features.map((f) => <li key={f}>{f}</li>)}
                                     </ul>
-                                    <button
-                                        className="btn btn-primary"
-                                        style={{
-                                            width: '100%',
-                                            justifyContent: 'center',
-                                            background: plan.color,
-                                            borderColor: plan.color,
-                                        }}
-                                        onClick={() => { setError(''); setSelectedPlan(plan.id); }}
-                                    >
-                                        Choose {plan.name}
-                                    </button>
+                                    {(() => {
+                                        const isCurrent = profile?.subscription_active && profile.subscription_type === plan.id;
+                                        if (isCurrent) {
+                                            return (
+                                                <button
+                                                    className="btn btn-primary"
+                                                    style={{
+                                                        width: '100%',
+                                                        justifyContent: 'center',
+                                                        background: 'var(--bg-surface)',
+                                                        borderColor: 'var(--border)',
+                                                        color: 'var(--text-secondary)',
+                                                        cursor: 'default',
+                                                    }}
+                                                    disabled
+                                                >
+                                                    Current
+                                                </button>
+                                            );
+                                        }
+                                        return (
+                                            <button
+                                                className="btn btn-primary"
+                                                style={{
+                                                    width: '100%',
+                                                    justifyContent: 'center',
+                                                    background: plan.color,
+                                                    borderColor: plan.color,
+                                                }}
+                                                onClick={() => { setError(''); setSelectedPlan(plan.id); }}
+                                            >
+                                                Choose {plan.name}
+                                            </button>
+                                        );
+                                    })()}
                                 </div>
                             ))}
                         </div>
