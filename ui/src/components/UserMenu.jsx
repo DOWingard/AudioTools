@@ -1,4 +1,4 @@
-import { UserButton, useUser } from '@clerk/clerk-react';
+import { UserButton, useUser, useAuth } from '@clerk/clerk-react';
 import { useAuthContext } from '../AuthContext.jsx';
 
 const BADGE_COLOR = {
@@ -18,7 +18,23 @@ function UsageIcon({ remaining }) {
 
 export default function UserMenu() {
     const { isSignedIn } = useUser();
+    const { getToken } = useAuth();
     const { openSignIn, profile, setSubModalOpen } = useAuthContext();
+
+    const openBillingPortal = async () => {
+        try {
+            const token = await getToken();
+            const resp = await fetch('/auth/billing/portal', {
+                method: 'POST',
+                headers: { Authorization: `Bearer ${token}` },
+            });
+            if (!resp.ok) throw new Error('Portal request failed');
+            const { url } = await resp.json();
+            window.location.href = url;
+        } catch (e) {
+            console.error('Billing portal error', e);
+        }
+    };
 
     if (!isSignedIn) {
         return (
@@ -64,15 +80,24 @@ export default function UserMenu() {
                             onClick={() => remaining === 0 && setSubModalOpen(true)}
                         />
                     ) : (
-                        <UserButton.Action
-                            label="Unlimited uses"
-                            labelIcon={
-                                <span style={{ fontSize: '1.5rem', lineHeight: 1, fontWeight: 700, color: '#6b7280', fontFamily: 'monospace' }}>
-                                    ∞
-                                </span>
-                            }
-                            onClick={() => { }}
-                        />
+                        <>
+                            <UserButton.Action
+                                label="Unlimited uses"
+                                labelIcon={
+                                    <span style={{ fontSize: '1.5rem', lineHeight: 1, fontWeight: 700, color: '#6b7280', fontFamily: 'monospace' }}>
+                                        ∞
+                                    </span>
+                                }
+                                onClick={() => { }}
+                            />
+                            <UserButton.Action
+                                label="Manage subscription"
+                                labelIcon={
+                                    <span style={{ fontSize: '0.9rem', lineHeight: 1 }}>⚙</span>
+                                }
+                                onClick={openBillingPortal}
+                            />
+                        </>
                     )}
                 </UserButton.MenuItems>
             </UserButton>
