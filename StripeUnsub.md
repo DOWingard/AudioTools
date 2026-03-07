@@ -381,6 +381,47 @@ webhook handler block in §1a above.
 
 ---
 
+## 1d. `create_checkout` — schedule guard for re-upgrade
+
+**Insert location:** `auth/main.py`, inside `create_checkout`, immediately after
+`row = await get_or_create_user(clerk_id, email)` (currently line 537) and before
+`session_kwargs = dict(...)`.
+
+**Why:** When a downgrade is scheduled via `billing/downgrade`, the
+`SubscriptionSchedule` remains permanently attached to the subscription (Phase 2 has
+no `end_date`). If the user later upgrades back to Premium, `checkout.Session.create()`
+with `mode="subscription"` and an existing `customer` would create a **second
+subscription** on top of the still-active standard one, rather than replacing it.
+Releasing the schedule first returns the subscription to a plain (un-scheduled) state
+and allows the checkout to replace it cleanly.
+
+```python
+    # Guard: if the user has a subscription with a pending SubscriptionSchedule
+    # (e.g. a scheduled downgrade from /billing/downgrade), release the schedule
+    # before opening a new checkout session.  Without this, Stripe creates a second
+    # subscription instead of replacing the existing one.
+    if row.get("stripe_subscription_id"):
+        try:
+            _existing_sub = stripe.Subscription.retrieve(row["stripe_subscription_id"])
+            if _existing_sub.schedule:
+                stripe.SubscriptionSchedule.release(_existing_sub.schedule)
+                log.info(
+                    "create_checkout: released schedule %s for clerk_id=%s before re-upgrade",
+                    _existing_sub.schedule, clerk_id,
+                )
+        except stripe.StripeError as exc:
+            # Non-fatal: log and proceed. If the schedule is already in a terminal
+            # state (cancelled, completed) sub.schedule will be None and this branch
+            # is never reached.  If release fails for another transient reason,
+            # Session.create() below will surface a clear Stripe error.
+            log.warning(
+                "create_checkout: could not release schedule for clerk_id=%s: %s",
+                clerk_id, exc,
+            )
+```
+
+---
+
 ## 2. Frontend — New `ManageSubModal.jsx`
 
 Create `ui/src/components/ManageSubModal.jsx`. Follows the same modal shell
@@ -665,10 +706,10 @@ No special configuration required. Prorations do not apply because:
 - Cancel uses `cancel_at_period_end=True` (no mid-cycle charge).
 - Downgrade uses `proration_behavior='none'` on both schedule phases.
 
-**Known limitation — re-upgrade path:** After a downgrade is scheduled, the
-`SubscriptionSchedule` remains permanently attached (Phase 2 has no `end_date`). If the
-user tries to re-upgrade to Premium, `create_checkout` must release the existing schedule
-first. This is a **required follow-on task** and is out of scope for this spec.
+**Re-upgrade path:** After a downgrade is scheduled, the `SubscriptionSchedule` remains
+permanently attached (Phase 2 has no `end_date`). The guard in **§1d** releases any
+existing schedule in `create_checkout` before opening a new Stripe Checkout Session,
+preventing a second subscription from being created.
 
 ---
 
@@ -696,7 +737,7 @@ is a no-op if status is already correct.
 |------|--------|
 | `database/init.sql` | Extend `chk_subscription_consistency` CHECK to include `'canceling_at_period_end'` and `'downgrading_at_period_end'` (§0) |
 | `auth/requirements.txt` | Pin stripe to current installed major: `stripe>=11,<12` to prevent silent breaking upgrades |
-| `auth/main.py` (`create_checkout`) | **Follow-on (out of scope):** Release any existing `SubscriptionSchedule` before creating a new checkout session, to prevent double-subscription when re-upgrading after a scheduled downgrade |
+| `auth/main.py` (`create_checkout`) | Add schedule-release guard inside `create_checkout` (§1d) |
 | `auth/main.py` | Patch `customer.subscription.updated` handler to check `cancel_at_period_end` and `has_schedule` (§1a) |
 | `auth/main.py` | Add `POST /auth/billing/cancel` after line 691 (§1b) |
 | `auth/main.py` | Add `POST /auth/billing/downgrade` after line 691 (§1c) |
@@ -715,3 +756,261 @@ This is safe in all modern stripe-python versions.
 2. Apply `database/init.sql` migration.
 3. Deploy `auth/` container (webhook patch + new endpoints).
 4. Deploy `ui/` container (new modal, wired trigger).
+
+---
+
+## 8. Tests — `tests/test_stripe_unsub.py`
+
+The test file already covers §1b, §1c, and §1a. Three changes are needed:
+
+### 8a. Fix existing test — `test_cancel_cancels_existing_schedule_before_modify`
+
+The test at line 214 patches `stripe.SubscriptionSchedule.cancel` but the corrected
+implementation now calls `stripe.SubscriptionSchedule.release`. Replace the test:
+
+```python
+    def test_cancel_releases_existing_schedule_before_modify(self, auth_client):
+        """
+        If the subscription has a SubscriptionSchedule attached (pending downgrade),
+        the endpoint must RELEASE (not cancel) the schedule before calling
+        Subscription.modify.  cancel() would terminate the subscription immediately;
+        release() detaches the schedule while leaving the subscription active so that
+        cancel_at_period_end=True takes effect at the billing boundary.
+        """
+        client, mock_conn = auth_client
+        mock_conn.reset_mock()
+
+        updated = _user_row(subscription_status="canceling_at_period_end")
+        mock_conn.fetchrow.side_effect = [_user_row(), updated]
+
+        with patch("auth.main.verify_clerk_token", AsyncMock(return_value={"sub": CLERK_ID})), \
+             patch("stripe.Subscription.retrieve", return_value=_stripe_sub(schedule=STRIPE_SCHED_ID)), \
+             patch("stripe.SubscriptionSchedule.release", return_value=MagicMock()) as mock_release, \
+             patch("stripe.SubscriptionSchedule.cancel",  return_value=MagicMock()) as mock_cancel, \
+             patch("stripe.Subscription.modify",          return_value=MagicMock()) as mock_modify:
+
+            resp = client.post("/auth/billing/cancel", headers=_auth_header())
+
+        assert resp.status_code == 200, resp.text
+        mock_release.assert_called_once_with(STRIPE_SCHED_ID), (
+            f"Must call SubscriptionSchedule.release({STRIPE_SCHED_ID!r}); "
+            f"release calls: {mock_release.call_args_list}"
+        )
+        mock_cancel.assert_not_called(), (
+            "Must NOT call SubscriptionSchedule.cancel — that would terminate the "
+            "subscription immediately instead of scheduling end-of-period cancellation"
+        )
+        mock_modify.assert_called_once()
+```
+
+### 8b. Add `TestReUpgrade` class — `create_checkout` schedule guard (§1d)
+
+Append after the `TestDowngradeSubscription` class:
+
+```python
+# ===========================================================================
+# 3. create_checkout — schedule guard for re-upgrade (§1d)
+# ===========================================================================
+
+class TestReUpgrade:
+    """
+    Tests for the create_checkout schedule guard (§1d of StripeUnsub.md).
+    A standard user who previously scheduled a downgrade has a SubscriptionSchedule
+    permanently attached to their subscription.  create_checkout must release it
+    before creating the Stripe Checkout Session to prevent a second subscription
+    being created instead of replacing the existing one.
+    """
+
+    def test_checkout_releases_schedule_before_session_create(self, auth_client):
+        """
+        Standard user with a persistent attached schedule re-upgrades to Premium.
+        - stripe.Subscription.retrieve called to detect the attached schedule
+        - stripe.SubscriptionSchedule.release called with the schedule ID
+        - stripe.checkout.Session.create still called after release
+        - 200 response with client_secret
+        """
+        client, mock_conn = auth_client
+        mock_conn.reset_mock()
+
+        standard_user = _user_row(subscription_type="standard", subscription_status="active")
+        mock_conn.fetchrow.return_value = standard_user
+
+        mock_session = MagicMock()
+        mock_session.client_secret = "cs_test_reupgrade_ok"
+
+        with patch("auth.main.verify_clerk_token",
+                   AsyncMock(return_value={"sub": CLERK_ID, "email": "test@example.com"})), \
+             patch("stripe.Subscription.retrieve",
+                   return_value=_stripe_sub(schedule=STRIPE_SCHED_ID)) as mock_retrieve, \
+             patch("stripe.SubscriptionSchedule.release",
+                   return_value=MagicMock()) as mock_release, \
+             patch("stripe.checkout.Session.create",
+                   return_value=mock_session) as mock_session_create:
+
+            resp = client.post(
+                "/auth/billing/checkout",
+                json={"plan": "premium"},
+                headers=_auth_header(),
+            )
+
+        assert resp.status_code == 200, resp.text
+        assert resp.json().get("client_secret") == "cs_test_reupgrade_ok"
+        mock_retrieve.assert_called_once_with(STRIPE_SUB_ID)
+        mock_release.assert_called_once_with(STRIPE_SCHED_ID)
+        mock_session_create.assert_called_once()
+
+    def test_checkout_no_schedule_skips_release(self, auth_client):
+        """
+        User with no attached schedule (fresh subscriber or already released).
+        stripe.SubscriptionSchedule.release must NOT be called.
+        """
+        client, mock_conn = auth_client
+        mock_conn.reset_mock()
+
+        standard_user = _user_row(subscription_type="standard", subscription_status="active")
+        mock_conn.fetchrow.return_value = standard_user
+
+        mock_session = MagicMock()
+        mock_session.client_secret = "cs_test_no_sched"
+
+        with patch("auth.main.verify_clerk_token",
+                   AsyncMock(return_value={"sub": CLERK_ID, "email": "test@example.com"})), \
+             patch("stripe.Subscription.retrieve",
+                   return_value=_stripe_sub(schedule=None)), \
+             patch("stripe.SubscriptionSchedule.release",
+                   return_value=MagicMock()) as mock_release, \
+             patch("stripe.checkout.Session.create", return_value=mock_session):
+
+            resp = client.post(
+                "/auth/billing/checkout",
+                json={"plan": "premium"},
+                headers=_auth_header(),
+            )
+
+        assert resp.status_code == 200, resp.text
+        mock_release.assert_not_called()
+
+    def test_checkout_no_subscription_skips_retrieve_and_release(self, auth_client):
+        """
+        Free user (no stripe_subscription_id) upgrading for the first time.
+        No Subscription.retrieve or SubscriptionSchedule.release should be made.
+        """
+        client, mock_conn = auth_client
+        mock_conn.reset_mock()
+
+        free_user = _user_row(
+            subscription_type="free",
+            subscription_status="free",
+            subscription_active=False,
+            stripe_subscription_id=None,
+        )
+        mock_conn.fetchrow.return_value = free_user
+
+        mock_session = MagicMock()
+        mock_session.client_secret = "cs_test_free_upgrade"
+
+        with patch("auth.main.verify_clerk_token",
+                   AsyncMock(return_value={"sub": CLERK_ID, "email": "test@example.com"})), \
+             patch("stripe.Subscription.retrieve",        return_value=MagicMock()) as mock_retrieve, \
+             patch("stripe.SubscriptionSchedule.release", return_value=MagicMock()) as mock_release, \
+             patch("stripe.checkout.Session.create",      return_value=mock_session):
+
+            resp = client.post(
+                "/auth/billing/checkout",
+                json={"plan": "premium"},
+                headers=_auth_header(),
+            )
+
+        assert resp.status_code == 200, resp.text
+        mock_retrieve.assert_not_called()
+        mock_release.assert_not_called()
+
+    def test_checkout_schedule_release_failure_is_nonfatal(self, auth_client):
+        """
+        SubscriptionSchedule.release() raises StripeError (e.g. schedule already
+        in a terminal state).  The error must be caught, logged, and checkout must
+        proceed — the guard is best-effort.
+        Expected: 200 AND stripe.checkout.Session.create is still called.
+        """
+        client, mock_conn = auth_client
+        mock_conn.reset_mock()
+
+        standard_user = _user_row(subscription_type="standard", subscription_status="active")
+        mock_conn.fetchrow.return_value = standard_user
+
+        mock_session = MagicMock()
+        mock_session.client_secret = "cs_test_release_err"
+
+        import stripe as _stripe
+        with patch("auth.main.verify_clerk_token",
+                   AsyncMock(return_value={"sub": CLERK_ID, "email": "test@example.com"})), \
+             patch("stripe.Subscription.retrieve",
+                   return_value=_stripe_sub(schedule=STRIPE_SCHED_ID)), \
+             patch("stripe.SubscriptionSchedule.release",
+                   side_effect=_stripe.StripeError("already released")) as mock_release, \
+             patch("stripe.checkout.Session.create",
+                   return_value=mock_session) as mock_session_create:
+
+            resp = client.post(
+                "/auth/billing/checkout",
+                json={"plan": "premium"},
+                headers=_auth_header(),
+            )
+
+        assert resp.status_code == 200, (
+            f"Schedule release failure must be non-fatal; got {resp.status_code}: {resp.text}"
+        )
+        mock_release.assert_called_once()
+        mock_session_create.assert_called_once()
+```
+
+### 8c. Add webhook test — perpetually attached schedule after downgrade completes
+
+Append to the `TestWebhookContract` class (currently at line 516). This test verifies
+the `sub_type == "premium"` guard from §1a against the realistic case where the schedule
+is still attached after the period transition fires:
+
+```python
+    def test_webhook_updated_standard_with_persistent_schedule_sets_active(self, auth_client):
+        """
+        After a downgrade completes, the SubscriptionSchedule remains permanently
+        attached (has_schedule=True).  When the period-end webhook fires with
+        status='active', schedule=SCHED_ID, and the *standard* price_id, the
+        sub_type == 'premium' guard in §1a must prevent overwriting
+        subscription_status → 'downgrading_at_period_end'.
+
+        Expected:
+        - 'downgrading_at_period_end' NOT written
+        - 'standard' IS written (plan transition confirmed)
+        """
+        client, mock_conn = auth_client
+        mock_conn.reset_mock()
+
+        mock_conn.execute.return_value  = "UPDATE 1"
+        mock_conn.fetchrow.return_value = None
+
+        obj = {
+            "id":                   STRIPE_SUB_ID,
+            "customer":             STRIPE_CUSTOMER,
+            "status":               "active",
+            "cancel_at_period_end": False,
+            "schedule":             STRIPE_SCHED_ID,     # still attached (never released)
+            "items": {"data": [{"price": {"id": PRICE_STANDARD}}]},  # plan already changed
+        }
+
+        resp = self._post_stripe_event(
+            client, "customer.subscription.updated", obj,
+            "evt_persistent_sched_transition",
+        )
+
+        assert resp.status_code == 200
+
+        all_execute = str(mock_conn.execute.call_args_list)
+        assert "downgrading_at_period_end" not in all_execute, (
+            "Webhook must NOT write 'downgrading_at_period_end' for a standard-price "
+            f"subscription even when has_schedule=True; execute calls: {all_execute}"
+        )
+        assert "standard" in all_execute, (
+            f"Webhook must write subscription_type='standard'; execute calls: {all_execute}"
+        )
+```

@@ -9,6 +9,7 @@ export function AuthProvider({ children }) {
     const [limitModalOpen, setLimitModalOpen] = useState(false);
     const [subModalOpen, setSubModalOpen] = useState(false);
     const [subModalPlan, setSubModalPlan] = useState(null);
+    const [manageSubOpen, setManageSubOpen] = useState(false);
     const [profile, setProfile] = useState(null);
     // Cached file count for standard-tier quota pre-checks (null = not yet fetched)
     const [fileCount, setFileCount] = useState(null);
@@ -34,6 +35,7 @@ export function AuthProvider({ children }) {
             limitModalOpen, openLimitModal, closeLimitModal,
             isProcessing, setIsProcessing,
             subModalOpen, setSubModalOpen, subModalPlan, setSubModalPlan, openSubModal,
+            manageSubOpen, setManageSubOpen,
             profile, setProfile,
             fileCount, setFileCount,
         }}>

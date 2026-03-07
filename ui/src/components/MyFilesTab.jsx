@@ -815,7 +815,7 @@ function PremiumFeatureOverlay({ onClose, onUpgrade, featureName }) {
                     maxWidth: '480px',
                     padding: '2.5rem 2rem',
                     textAlign: 'center',
-                    background: 'linear-gradient(135deg, var(--bg-card) 0%, #fff 100%)',
+                    background: 'linear-gradient(135deg, #1a1a2e 0%, #16213e 100%)',
                     borderRadius: 24,
                     boxShadow: '0 20px 50px rgba(0,0,0,0.15)',
                     position: 'relative'
@@ -837,7 +837,7 @@ function PremiumFeatureOverlay({ onClose, onUpgrade, featureName }) {
                     Premium Feature
                 </h2>
 
-                <p style={{ color: 'var(--text-secondary)', fontSize: '1.05rem', lineHeight: 1.6, marginBottom: '2rem' }}>
+                <p style={{ color: '#a0aec0', fontSize: '1.05rem', lineHeight: 1.6, marginBottom: '2rem' }}>
                     {featureName} is reserved for <strong>Premium</strong> tier members.
                     Unlock advanced AI capabilities and unlimited storage today.
                 </p>

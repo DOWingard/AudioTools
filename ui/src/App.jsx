@@ -5,6 +5,7 @@ import { AuthProvider, useAuthContext } from './AuthContext.jsx';
 import SignInModal from './components/SignInModal.jsx';
 import UserMenu from './components/UserMenu.jsx';
 import SubscriptionModal from './components/SubscriptionModal.jsx';
+import ManageSubModal from './components/ManageSubModal.jsx';
 import LimitModal from './components/LimitModal.jsx';
 import SyncTagTab from './components/SyncTagTab.jsx';
 import StemSeparatorTab from './components/StemSeparatorTab.jsx';
@@ -297,6 +298,7 @@ function AppLayout() {
             {/* ── Modals ──────────────────────────────────── */}
             <SignInModal />
             <SubModalWrapper />
+            <ManageSubModalWrapper />
             <LimitModal open={limitModalOpen} onClose={closeLimitModal} />
         </>
     );
@@ -330,6 +332,16 @@ function AppInner() {
         <Router>
             <AppLayout />
         </Router>
+    );
+}
+
+function ManageSubModalWrapper() {
+    const { manageSubOpen, setManageSubOpen } = useAuthContext();
+    return (
+        <ManageSubModal
+            open={manageSubOpen}
+            onClose={() => setManageSubOpen(false)}
+        />
     );
 }
 

@@ -9,8 +9,10 @@ CREATE TABLE IF NOT EXISTS users (
     subscription_type       VARCHAR(20) NOT NULL DEFAULT 'free'
                             CHECK (subscription_type IN ('free', 'standard', 'premium')),
     subscription_active     BOOLEAN NOT NULL DEFAULT FALSE,
-    subscription_status     VARCHAR(20) NOT NULL DEFAULT 'free'
-                            CHECK (subscription_status IN ('free', 'active', 'past_due', 'cancelled')),
+    subscription_status     VARCHAR(30) NOT NULL DEFAULT 'free'
+                            CONSTRAINT users_subscription_status_check
+                            CHECK (subscription_status IN ('free', 'active', 'past_due', 'cancelled',
+                                                           'canceling_at_period_end', 'downgrading_at_period_end')),
     daily_free_downloads    INT NOT NULL DEFAULT 3,
     daily_downloads_reset_at TIMESTAMPTZ,
     qdrant_graph_id         VARCHAR(255),
@@ -27,8 +29,17 @@ CREATE INDEX IF NOT EXISTS idx_users_stripe_sub ON users(stripe_subscription_id)
 -- Prevent contradictory subscription state (issue #21)
 ALTER TABLE users DROP CONSTRAINT IF EXISTS chk_subscription_consistency;
 ALTER TABLE users ADD CONSTRAINT chk_subscription_consistency CHECK (
-    (subscription_active = TRUE  AND subscription_status IN ('active')) OR
+    (subscription_active = TRUE  AND subscription_status IN ('active', 'canceling_at_period_end', 'downgrading_at_period_end')) OR
     (subscription_active = FALSE AND subscription_status IN ('free', 'past_due', 'cancelled'))
+);
+
+-- §0 StripeUnsub: migration for existing databases
+-- Widen subscription_status and add new scheduled-action status values.
+ALTER TABLE users ALTER COLUMN subscription_status TYPE VARCHAR(30);
+ALTER TABLE users DROP CONSTRAINT IF EXISTS users_subscription_status_check;
+ALTER TABLE users ADD CONSTRAINT users_subscription_status_check CHECK (
+    subscription_status IN ('free', 'active', 'past_due', 'cancelled',
+                            'canceling_at_period_end', 'downgrading_at_period_end')
 );
 
 -- Subscription event audit log (issue #23)

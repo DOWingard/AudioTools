@@ -381,13 +381,24 @@ async def stripe_webhook(request: Request, stripe_signature: str = Header(None))
     raw_event_id = event.get("id", "")
 
     if event_type in ("customer.subscription.created", "customer.subscription.updated"):
-        stripe_customer_id = obj.get("customer")
-        subscription_id    = obj.get("id")
-        stripe_status      = obj.get("status", "")
-        price_id           = (obj.get("items", {}).get("data") or [{}])[0].get("price", {}).get("id", "")
+        stripe_customer_id   = obj.get("customer")
+        subscription_id      = obj.get("id")
+        stripe_status        = obj.get("status", "")
+        price_id             = (obj.get("items", {}).get("data") or [{}])[0].get("price", {}).get("id", "")
+        cancel_at_period_end = obj.get("cancel_at_period_end", False)
+        has_schedule         = bool(obj.get("schedule"))
 
         local_status, active = _map_stripe_status(stripe_status)
         sub_type             = _map_price_to_type(price_id)
+
+        # Preserve user-facing scheduled-action statuses so this webhook does not
+        # overwrite the optimistic state set by /billing/cancel or /billing/downgrade.
+        if cancel_at_period_end and local_status == "active":
+            local_status = "canceling_at_period_end"
+        elif has_schedule and local_status == "active" and sub_type == "premium":
+            # Guard on sub_type: after downgrade completes the schedule remains
+            # permanently attached, so has_schedule stays True on renewals.
+            local_status = "downgrading_at_period_end"
 
         async with db_pool.acquire() as conn:
             result = await conn.execute(
@@ -536,6 +547,25 @@ async def create_checkout(request: Request, authorization: str = Header(...)):
     # Upsert: Clerk webhook may not have fired yet when the user reaches checkout
     row = await get_or_create_user(clerk_id, email)
 
+    # Guard: if the user has a subscription with a pending SubscriptionSchedule
+    # (e.g. a scheduled downgrade from /billing/downgrade), release the schedule
+    # before opening a new checkout session.  Without this, Stripe creates a second
+    # subscription instead of replacing the existing one.
+    if row.get("stripe_subscription_id"):
+        try:
+            _existing_sub = stripe.Subscription.retrieve(row["stripe_subscription_id"])
+            if _existing_sub.schedule:
+                stripe.SubscriptionSchedule.release(_existing_sub.schedule)
+                log.info(
+                    "create_checkout: released schedule %s for clerk_id=%s before re-upgrade",
+                    _existing_sub.schedule, clerk_id,
+                )
+        except stripe.StripeError as exc:
+            log.warning(
+                "create_checkout: could not release schedule for clerk_id=%s: %s",
+                clerk_id, exc,
+            )
+
     session_kwargs = dict(
         mode="subscription",
         line_items=[{"price": price_id, "quantity": 1}],
@@ -606,15 +636,15 @@ async def sync_billing(request: Request, authorization: str = Header(...)):
         )
         raise HTTPException(status_code=403, detail="Session does not belong to this account")
 
-    # Extract subscription data from the expanded Subscription object
+    # Extract subscription data from the expanded Subscription object.
+    # Use dict-key access for "items" — StripeObject inherits from dict, so
+    # subscription.items resolves to dict.items() (the built-in method) rather
+    # than the Stripe ListObject stored under the "items" key.
     subscription = session.subscription
     stripe_subscription_id = subscription.id
     stripe_status = subscription.status
-    price_id = (
-        subscription.items.data[0].price.id
-        if subscription.items and subscription.items.data
-        else ""
-    )
+    _items_data = subscription["items"]["data"] if subscription.get("items") else []
+    price_id = _items_data[0]["price"]["id"] if _items_data else ""
 
     local_status, active = _map_stripe_status(stripe_status)
     sub_type = _map_price_to_type(price_id)
@@ -689,3 +719,178 @@ async def create_portal(authorization: str = Header(...)):
         idempotency_key=idempotency_key,
     )
     return {"url": portal.url}
+
+
+@app.post("/auth/billing/cancel")
+async def cancel_subscription(authorization: str = Header(...)):
+    if not STRIPE_SECRET_KEY:
+        raise HTTPException(status_code=500, detail="Stripe not configured")
+
+    token_data = await verify_clerk_token(authorization)
+    clerk_id = token_data.get("sub") or token_data.get("user_id")
+    if not clerk_id:
+        raise HTTPException(status_code=401, detail="Cannot determine clerk_id")
+
+    async with db_pool.acquire() as conn:
+        row = await conn.fetchrow(
+            "SELECT stripe_subscription_id, subscription_status FROM users WHERE clerk_id = $1",
+            clerk_id,
+        )
+    if not row or not row["stripe_subscription_id"]:
+        raise HTTPException(status_code=404, detail="No active subscription found")
+
+    # Idempotency: already scheduled to cancel — return current state without
+    # making a redundant Stripe API call or duplicate audit entry.
+    if row["subscription_status"] == "canceling_at_period_end":
+        async with db_pool.acquire() as conn:
+            current = await conn.fetchrow("SELECT * FROM users WHERE clerk_id = $1", clerk_id)
+        if not current:
+            raise HTTPException(status_code=404, detail="User not found")
+        return _row_to_profile(current)
+
+    try:
+        sub = stripe.Subscription.retrieve(row["stripe_subscription_id"])
+        if sub.schedule:
+            # Release (not cancel) the schedule — cancel() terminates the subscription
+            # immediately; release() detaches it so cancel_at_period_end can take effect.
+            stripe.SubscriptionSchedule.release(sub.schedule)
+            log.info("billing/cancel: released existing schedule %s for clerk_id=%s",
+                     sub.schedule, clerk_id)
+
+        window = int(time.time()) // 600   # 10-minute dedup window
+        idempotency_key = hashlib.sha256(
+            f"cancel:{clerk_id}:{window}".encode()
+        ).hexdigest()
+        stripe.Subscription.modify(
+            row["stripe_subscription_id"],
+            cancel_at_period_end=True,
+            idempotency_key=idempotency_key,
+        )
+    except stripe.StripeError as exc:
+        log.error("Stripe cancel failed for clerk_id=%s: %s", clerk_id, exc)
+        raise HTTPException(status_code=502, detail="Stripe error — please try again")
+
+    async with db_pool.acquire() as conn:
+        updated = await conn.fetchrow(
+            """
+            UPDATE users
+            SET subscription_status = 'canceling_at_period_end'
+            WHERE clerk_id = $1
+            RETURNING *
+            """,
+            clerk_id,
+        )
+        if not updated:
+            raise HTTPException(status_code=404, detail="User not found")
+        await conn.execute(
+            """
+            INSERT INTO subscription_events
+                (clerk_id, stripe_id, event_type, stripe_status, local_status, sub_type, raw_event_id)
+            SELECT clerk_id, stripe_id, 'billing.cancel', 'canceling', 'canceling_at_period_end',
+                   subscription_type, $2
+            FROM users WHERE clerk_id = $1
+            """,
+            clerk_id,
+            f"api:{row['stripe_subscription_id']}",
+        )
+
+    log.info("billing/cancel: clerk_id=%s sub=%s", clerk_id, row["stripe_subscription_id"])
+    return _row_to_profile(updated)
+
+
+@app.post("/auth/billing/downgrade")
+async def downgrade_subscription(authorization: str = Header(...)):
+    if not STRIPE_SECRET_KEY:
+        raise HTTPException(status_code=500, detail="Stripe not configured")
+    if not STRIPE_PRICE_STANDARD:
+        raise HTTPException(status_code=500, detail="Standard price not configured")
+
+    token_data = await verify_clerk_token(authorization)
+    clerk_id = token_data.get("sub") or token_data.get("user_id")
+    if not clerk_id:
+        raise HTTPException(status_code=401, detail="Cannot determine clerk_id")
+
+    async with db_pool.acquire() as conn:
+        row = await conn.fetchrow(
+            "SELECT stripe_subscription_id, subscription_type, subscription_status FROM users WHERE clerk_id = $1",
+            clerk_id,
+        )
+    if not row or not row["stripe_subscription_id"]:
+        raise HTTPException(status_code=404, detail="No active subscription found")
+    if row["subscription_type"] != "premium":
+        raise HTTPException(status_code=400, detail="Only premium subscriptions can be downgraded")
+
+    # Idempotency: already scheduled to downgrade — return current state without
+    # making a redundant Stripe API call (SubscriptionSchedule.create would fail
+    # with "Subscription already has a schedule" if called twice).
+    if row["subscription_status"] == "downgrading_at_period_end":
+        async with db_pool.acquire() as conn:
+            current = await conn.fetchrow("SELECT * FROM users WHERE clerk_id = $1", clerk_id)
+        if not current:
+            raise HTTPException(status_code=404, detail="User not found")
+        return _row_to_profile(current)
+
+    try:
+        sub = stripe.Subscription.retrieve(row["stripe_subscription_id"])
+        current_price      = sub["items"]["data"][0]["price"]["id"]
+        current_period_end = sub.current_period_end
+
+        schedule = stripe.SubscriptionSchedule.create(from_subscription=sub.id)
+
+        try:
+            stripe.SubscriptionSchedule.modify(
+                schedule.id,
+                end_behavior="release",
+                phases=[
+                    {
+                        "start_date": schedule.phases[0].start_date,
+                        "end_date": current_period_end,
+                        "items": [{"price": current_price, "quantity": 1}],
+                        "proration_behavior": "none",
+                    },
+                    {
+                        "items": [{"price": STRIPE_PRICE_STANDARD, "quantity": 1}],
+                        "proration_behavior": "none",
+                    },
+                ],
+            )
+        except stripe.StripeError as modify_exc:
+            try:
+                stripe.SubscriptionSchedule.cancel(schedule.id)
+                log.warning("billing/downgrade: cancelled dangling schedule %s for clerk_id=%s",
+                            schedule.id, clerk_id)
+            except stripe.StripeError as cancel_exc:
+                log.error("billing/downgrade: failed to cancel dangling schedule %s for clerk_id=%s: %s",
+                          schedule.id, clerk_id, cancel_exc)
+            raise modify_exc
+
+    except stripe.StripeError as exc:
+        log.error("Stripe downgrade failed for clerk_id=%s: %s", clerk_id, exc)
+        raise HTTPException(status_code=502, detail="Stripe error — please try again")
+
+    async with db_pool.acquire() as conn:
+        updated = await conn.fetchrow(
+            """
+            UPDATE users
+            SET subscription_status = 'downgrading_at_period_end'
+            WHERE clerk_id = $1
+            RETURNING *
+            """,
+            clerk_id,
+        )
+        if not updated:
+            raise HTTPException(status_code=404, detail="User not found")
+        await conn.execute(
+            """
+            INSERT INTO subscription_events
+                (clerk_id, stripe_id, event_type, stripe_status, local_status, sub_type, raw_event_id)
+            SELECT clerk_id, stripe_id, 'billing.downgrade', 'active', 'downgrading_at_period_end',
+                   subscription_type, $2
+            FROM users WHERE clerk_id = $1
+            """,
+            clerk_id,
+            f"api:{row['stripe_subscription_id']}",
+        )
+
+    log.info("billing/downgrade: clerk_id=%s premium→standard", clerk_id)
+    return _row_to_profile(updated)

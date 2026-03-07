@@ -211,11 +211,13 @@ class TestCancelSubscription:
 
         assert resp.json()["clerk_id"] == CLERK_ID
 
-    def test_cancel_cancels_existing_schedule_before_modify(self, auth_client):
+    def test_cancel_releases_existing_schedule_before_modify(self, auth_client):
         """
         If the subscription has a SubscriptionSchedule attached (pending downgrade),
-        the endpoint must cancel the schedule before calling Subscription.modify.
-        Without this, stripe.Subscription.modify raises InvalidRequestError.
+        the endpoint must RELEASE (not cancel) the schedule before calling
+        Subscription.modify.  cancel() would terminate the subscription immediately;
+        release() detaches the schedule while leaving the subscription active so that
+        cancel_at_period_end=True takes effect at the billing boundary as intended.
         """
         client, mock_conn = auth_client
         mock_conn.reset_mock()
@@ -225,13 +227,21 @@ class TestCancelSubscription:
 
         with patch("auth.main.verify_clerk_token", AsyncMock(return_value={"sub": CLERK_ID})), \
              patch("stripe.Subscription.retrieve", return_value=_stripe_sub(schedule=STRIPE_SCHED_ID)), \
-             patch("stripe.SubscriptionSchedule.cancel", return_value=MagicMock()) as mock_sched_cancel, \
-             patch("stripe.Subscription.modify",         return_value=MagicMock()) as mock_modify:
+             patch("stripe.SubscriptionSchedule.release", return_value=MagicMock()) as mock_release, \
+             patch("stripe.SubscriptionSchedule.cancel",  return_value=MagicMock()) as mock_cancel, \
+             patch("stripe.Subscription.modify",          return_value=MagicMock()) as mock_modify:
 
             resp = client.post("/auth/billing/cancel", headers=_auth_header())
 
         assert resp.status_code == 200, resp.text
-        mock_sched_cancel.assert_called_once_with(STRIPE_SCHED_ID)
+        mock_release.assert_called_once_with(STRIPE_SCHED_ID), (
+            f"Must call SubscriptionSchedule.release({STRIPE_SCHED_ID!r}); "
+            f"release calls: {mock_release.call_args_list}"
+        )
+        mock_cancel.assert_not_called(), (
+            "Must NOT call SubscriptionSchedule.cancel — that would terminate the "
+            "subscription immediately instead of scheduling end-of-period cancellation"
+        )
         mock_modify.assert_called_once()
 
     def test_cancel_idempotency_guard_skips_stripe_when_already_canceling(self, auth_client):
@@ -510,7 +520,166 @@ class TestDowngradeSubscription:
 
 
 # ===========================================================================
-# 3. Stripe webhook contract
+# 3. create_checkout — schedule guard for re-upgrade (§1d)
+# ===========================================================================
+
+class TestReUpgrade:
+    """
+    Tests for the create_checkout schedule guard (§1d of StripeUnsub.md).
+    A standard user who previously scheduled a downgrade has a SubscriptionSchedule
+    permanently attached to their subscription.  create_checkout must release it
+    before creating the Stripe Checkout Session to prevent a second subscription
+    being created instead of replacing the existing one.
+    """
+
+    def test_checkout_releases_schedule_before_session_create(self, auth_client):
+        """
+        Standard user with a persistent attached schedule re-upgrades to Premium.
+        - stripe.Subscription.retrieve called to detect the attached schedule
+        - stripe.SubscriptionSchedule.release called with the schedule ID
+        - stripe.checkout.Session.create still called after release
+        - 200 response with client_secret
+        """
+        client, mock_conn = auth_client
+        mock_conn.reset_mock()
+        mock_conn.fetchrow.side_effect = None  # clear stale side_effect from prior tests
+
+        standard_user = _user_row(subscription_type="standard", subscription_status="active")
+        mock_conn.fetchrow.return_value = standard_user
+
+        mock_session = MagicMock()
+        mock_session.client_secret = "cs_test_reupgrade_ok"
+
+        with patch("auth.main.verify_clerk_token",
+                   AsyncMock(return_value={"sub": CLERK_ID, "email": "test@example.com"})), \
+             patch("stripe.Subscription.retrieve",
+                   return_value=_stripe_sub(schedule=STRIPE_SCHED_ID)) as mock_retrieve, \
+             patch("stripe.SubscriptionSchedule.release",
+                   return_value=MagicMock()) as mock_release, \
+             patch("stripe.checkout.Session.create",
+                   return_value=mock_session) as mock_session_create:
+
+            resp = client.post(
+                "/auth/billing/checkout",
+                json={"plan": "premium"},
+                headers=_auth_header(),
+            )
+
+        assert resp.status_code == 200, resp.text
+        assert resp.json().get("client_secret") == "cs_test_reupgrade_ok"
+        mock_retrieve.assert_called_once_with(STRIPE_SUB_ID)
+        mock_release.assert_called_once_with(STRIPE_SCHED_ID)
+        mock_session_create.assert_called_once()
+
+    def test_checkout_no_schedule_skips_release(self, auth_client):
+        """
+        User with no attached schedule (fresh subscriber or already released).
+        stripe.SubscriptionSchedule.release must NOT be called.
+        """
+        client, mock_conn = auth_client
+        mock_conn.reset_mock()
+        mock_conn.fetchrow.side_effect = None  # clear stale side_effect from prior tests
+
+        standard_user = _user_row(subscription_type="standard", subscription_status="active")
+        mock_conn.fetchrow.return_value = standard_user
+
+        mock_session = MagicMock()
+        mock_session.client_secret = "cs_test_no_sched"
+
+        with patch("auth.main.verify_clerk_token",
+                   AsyncMock(return_value={"sub": CLERK_ID, "email": "test@example.com"})), \
+             patch("stripe.Subscription.retrieve",
+                   return_value=_stripe_sub(schedule=None)), \
+             patch("stripe.SubscriptionSchedule.release",
+                   return_value=MagicMock()) as mock_release, \
+             patch("stripe.checkout.Session.create", return_value=mock_session):
+
+            resp = client.post(
+                "/auth/billing/checkout",
+                json={"plan": "premium"},
+                headers=_auth_header(),
+            )
+
+        assert resp.status_code == 200, resp.text
+        mock_release.assert_not_called()
+
+    def test_checkout_no_subscription_skips_retrieve_and_release(self, auth_client):
+        """
+        Free user (no stripe_subscription_id) upgrading for the first time.
+        No Subscription.retrieve or SubscriptionSchedule.release should be called.
+        """
+        client, mock_conn = auth_client
+        mock_conn.reset_mock()
+        mock_conn.fetchrow.side_effect = None  # clear stale side_effect from prior tests
+
+        free_user = _user_row(
+            subscription_type="free",
+            subscription_status="free",
+            subscription_active=False,
+            stripe_subscription_id=None,
+        )
+        mock_conn.fetchrow.return_value = free_user
+
+        mock_session = MagicMock()
+        mock_session.client_secret = "cs_test_free_upgrade"
+
+        with patch("auth.main.verify_clerk_token",
+                   AsyncMock(return_value={"sub": CLERK_ID, "email": "test@example.com"})), \
+             patch("stripe.Subscription.retrieve",        return_value=MagicMock()) as mock_retrieve, \
+             patch("stripe.SubscriptionSchedule.release", return_value=MagicMock()) as mock_release, \
+             patch("stripe.checkout.Session.create",      return_value=mock_session):
+
+            resp = client.post(
+                "/auth/billing/checkout",
+                json={"plan": "premium"},
+                headers=_auth_header(),
+            )
+
+        assert resp.status_code == 200, resp.text
+        mock_retrieve.assert_not_called()
+        mock_release.assert_not_called()
+
+    def test_checkout_schedule_release_failure_is_nonfatal(self, auth_client):
+        """
+        SubscriptionSchedule.release() raises StripeError (e.g. schedule already in
+        a terminal state).  The error must be caught and logged; checkout must proceed.
+        Expected: 200 AND stripe.checkout.Session.create is still called.
+        """
+        client, mock_conn = auth_client
+        mock_conn.reset_mock()
+        mock_conn.fetchrow.side_effect = None  # clear stale side_effect from prior tests
+
+        standard_user = _user_row(subscription_type="standard", subscription_status="active")
+        mock_conn.fetchrow.return_value = standard_user
+
+        mock_session = MagicMock()
+        mock_session.client_secret = "cs_test_release_err"
+
+        import stripe as _stripe
+        with patch("auth.main.verify_clerk_token",
+                   AsyncMock(return_value={"sub": CLERK_ID, "email": "test@example.com"})), \
+             patch("stripe.Subscription.retrieve",
+                   return_value=_stripe_sub(schedule=STRIPE_SCHED_ID)), \
+             patch("stripe.SubscriptionSchedule.release",
+                   side_effect=_stripe.StripeError("already released")) as mock_release, \
+             patch("stripe.checkout.Session.create",
+                   return_value=mock_session) as mock_session_create:
+
+            resp = client.post(
+                "/auth/billing/checkout",
+                json={"plan": "premium"},
+                headers=_auth_header(),
+            )
+
+        assert resp.status_code == 200, (
+            f"Schedule release failure must be non-fatal; got {resp.status_code}: {resp.text}"
+        )
+        mock_release.assert_called_once()
+        mock_session_create.assert_called_once()
+
+
+# ===========================================================================
+# 4. Stripe webhook contract
 # ===========================================================================
 
 class TestWebhookContract:
@@ -652,6 +821,50 @@ class TestWebhookContract:
         assert "standard" in all_execute, (
             f"subscription_type must be 'standard' after downgrade completes; "
             f"calls: {all_execute}"
+        )
+
+    def test_webhook_updated_standard_with_persistent_schedule_sets_active(self, auth_client):
+        """
+        After a downgrade completes, the SubscriptionSchedule remains permanently
+        attached (Phase 2 has no end_date, so has_schedule stays True on all future
+        webhooks).  When a renewal fires with status='active', schedule=SCHED_ID, and
+        the standard price_id, the sub_type == 'premium' guard in §1a must prevent
+        overwriting subscription_status → 'downgrading_at_period_end'.
+
+        Expected:
+        - 'downgrading_at_period_end' NOT written to DB
+        - 'standard' IS written (plan confirmed as standard)
+        """
+        client, mock_conn = auth_client
+        mock_conn.reset_mock()
+
+        mock_conn.execute.return_value  = "UPDATE 1"
+        mock_conn.fetchrow.return_value = None
+
+        obj = {
+            "id":                   STRIPE_SUB_ID,
+            "customer":             STRIPE_CUSTOMER,
+            "status":               "active",
+            "cancel_at_period_end": False,
+            "schedule":             STRIPE_SCHED_ID,     # still attached — never released
+            "items": {"data": [{"price": {"id": PRICE_STANDARD}}]},  # plan already standard
+        }
+
+        resp = self._post_stripe_event(
+            client, "customer.subscription.updated", obj,
+            "evt_persistent_sched_renewal",
+        )
+
+        assert resp.status_code == 200
+
+        all_execute = str(mock_conn.execute.call_args_list)
+        assert "downgrading_at_period_end" not in all_execute, (
+            "Webhook must NOT write 'downgrading_at_period_end' for a standard-price "
+            "subscription even when has_schedule=True (perpetually attached schedule); "
+            f"execute calls: {all_execute}"
+        )
+        assert "standard" in all_execute, (
+            f"Webhook must write subscription_type='standard'; execute calls: {all_execute}"
         )
 
 
