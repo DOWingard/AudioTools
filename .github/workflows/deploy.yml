@@ -1,4 +1,4 @@
-name: UI — Build & Vercel Deploy
+name: UI — Build & Cloudflare Deploy
 
 on:
   push:
@@ -6,7 +6,7 @@ on:
 
 jobs:
   # ── UI build check ───────────────────────────────────────────────
-  test-ui:
+  build-ui:
     name: Build UI
     runs-on: ubuntu-latest
     defaults:
@@ -27,18 +27,27 @@ jobs:
           VITE_CLERK_PUBLISHABLE_KEY: ${{ secrets.VITE_CLERK_PUBLISHABLE_KEY }}
           VITE_STRIPE_PUBLISHABLE_KEY: ${{ secrets.VITE_STRIPE_PUBLISHABLE_KEY }}
 
-  # ── Deploy to Vercel ────────────────────────────────────────────
-  deploy-ui:
-    name: Deploy to Vercel
-    runs-on: ubuntu-latest
-    needs: [test-ui]
-    steps:
-      - uses: actions/checkout@v4
-      - name: Deploy to Vercel
-        uses: amondnet/vercel-action@v24
+      - name: Upload Build Artifact
+        uses: actions/upload-artifact@v4
         with:
-          vercel-token: ${{ secrets.VERCEL_TOKEN }}
-          vercel-org-id: ${{ secrets.VERCEL_ORG_ID }}
-          vercel-project-id: ${{ secrets.VERCEL_PROJECT_ID }}
-          working-directory: ./ui
-          vercel-args: '--prod'
+          name: ui-dist
+          path: ui/dist/
+
+  # ── Deploy to Cloudflare Pages ──────────────────────────────────
+  deploy-cloudflare:
+    name: Deploy to Cloudflare
+    runs-on: ubuntu-latest
+    needs: [build-ui]
+    steps:
+      - name: Download Build Artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: ui-dist
+          path: dist
+
+      - name: Deploy to Cloudflare Pages
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          command: pages deploy dist --project-name=audiotility-decommissioned
