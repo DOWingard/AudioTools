@@ -43,11 +43,15 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: ui-dist
-          path: dist
+          path: deploy-dist
+
+      - name: Verify dist contents
+        run: ls -R deploy-dist
 
       - name: Deploy to Cloudflare Pages
         uses: cloudflare/wrangler-action@v3
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          command: pages deploy dist --project-name=audiotility-decommissioned
+          command: pages deploy deploy-dist --project-name=audiotility
+          workingDirectory: .
