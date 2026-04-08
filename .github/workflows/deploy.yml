@@ -35,6 +35,7 @@ jobs:
 
   # ── Deploy to Cloudflare Pages ──────────────────────────────────
   deploy-cloudflare:
+    if: false
     name: Deploy to Cloudflare
     runs-on: ubuntu-latest
     needs: [build-ui]
@@ -55,3 +56,4 @@ jobs:
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           command: pages deploy deploy-dist --project-name=audiotility
           workingDirectory: .
+          packageManager: npm
